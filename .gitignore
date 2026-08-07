@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env.local
+dist/
+build/
+*.egg-info/
+var/
+external/
+
+# Third-party corpora are referenced, never vendored. fixtures/SOURCES.md
+# states this project does not copy a full corpus; committing one would
+# contradict that and make every clone carry 16MB of someone else's data.
+# Obtain AliMeeting4MUG from its own release and point --alimeeting4mug at it.
+datasets/

@@ -1,0 +1,87 @@
+{
+  "pack_id": "weekly-coordination-p0",
+  "pack_version": "1.0.0",
+  "source": {
+    "type": "project_fixture",
+    "planned_upstream": "modelscope/Alimeeting4MUG",
+    "license": "CC-BY-4.0",
+    "note": "ModelScope download was unavailable during bootstrap; structure matches the planned curated import."
+  },
+  "timezone": "Australia/Sydney",
+  "start_sim_time": "2026-08-03T09:00:00+10:00",
+  "evaluation_cutoff_sim_time": "2026-08-08T17:00:00+10:00",
+  "organization": {"organization_id": "org_demo", "name": "示例产品团队"},
+  "actors": [
+    {"actor_id": "owner_lead", "display_name": "林悦", "roles": ["COORDINATOR"]},
+    {"actor_id": "owner_a", "display_name": "陈晨", "roles": ["PARTICIPANT"]},
+    {"actor_id": "owner_b", "display_name": "周宁", "roles": ["PARTICIPANT"]},
+    {"actor_id": "owner_c", "display_name": "何佳", "roles": ["PARTICIPANT"]}
+  ],
+  "transcript": [
+    {"speaker": "林悦", "text": "陈晨明天下班前整理客户反馈表，包含问题分类和优先级。"},
+    {"speaker": "林悦", "text": "周宁周三下班前提交上线风险清单，至少覆盖依赖、回滚和负责人。"},
+    {"speaker": "何佳", "text": "我周三下班前更新发布说明，先给初版，有变化再补最新版。"},
+    {"speaker": "林悦", "text": "何佳周四下班前再给一份培训安排，必须包含时间和讲师。"}
+  ],
+  "policy": {
+    "confirmation_timeout_hours": 4,
+    "check_in_lead_hours": 8,
+    "silence_window_hours": 4,
+    "inquiry_cooldown_hours": 4,
+    "signal_default_ttl_hours": 4,
+    "l2_wait_hours": 4,
+    "daily_touch_budget": 2,
+    "progress_window_hours": 4,
+    "outbox_max_attempts": 5
+  },
+  "action_items": [
+    {
+      "action_item_id": "ai_feedback",
+      "title": "整理客户反馈表",
+      "deliverable_key": "customer_feedback",
+      "owner_actor_id": null,
+      "team_required_by_sim_time": "2026-08-04T17:00:00+10:00",
+      "source_span": "transcript[0]",
+      "work_requirements": "覆盖结构化必填字段，并提供可验收正文或附件。",
+      "management_review_policy": "检查必填字段、来源、版本与任务目标一致性。",
+      "required_fields": ["categories", "priorities"],
+      "behavior": ["NORMAL"]
+    },
+    {
+      "action_item_id": "ai_risks",
+      "title": "提交上线风险清单",
+      "deliverable_key": "release_risks",
+      "owner_actor_id": null,
+      "team_required_by_sim_time": "2026-08-05T17:00:00+10:00",
+      "source_span": "transcript[1]",
+      "work_requirements": "覆盖结构化必填字段，并提供可验收正文或附件。",
+      "management_review_policy": "检查必填字段、来源、版本与任务目标一致性。",
+      "required_fields": ["dependencies", "rollback", "owners"],
+      "behavior": ["SILENT_IN_CHECK_WINDOW"]
+    },
+    {
+      "action_item_id": "ai_release_notes",
+      "title": "更新发布说明",
+      "deliverable_key": "release_notes",
+      "owner_actor_id": null,
+      "team_required_by_sim_time": "2026-08-05T17:00:00+10:00",
+      "source_span": "transcript[2]",
+      "work_requirements": "覆盖结构化必填字段，并提供可验收正文或附件。",
+      "management_review_policy": "检查必填字段、来源、版本与任务目标一致性。",
+      "required_fields": ["version", "changes"],
+      "behavior": ["VERSION_REFRESH", "REQUEST_HELP"]
+    },
+    {
+      "action_item_id": "ai_training",
+      "title": "提交培训安排",
+      "deliverable_key": "training_plan",
+      "owner_actor_id": null,
+      "team_required_by_sim_time": "2026-08-06T17:00:00+10:00",
+      "source_span": "transcript[3]",
+      "work_requirements": "覆盖结构化必填字段，并提供可验收正文或附件。",
+      "management_review_policy": "检查必填字段、来源、版本与任务目标一致性。",
+      "required_fields": ["time", "trainer"],
+      "behavior": ["INVALID_THEN_FIX"]
+    }
+  ]
+}

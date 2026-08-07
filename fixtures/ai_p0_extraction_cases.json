@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "description": "Small frozen regression set for the offline AI-P0 Harness; replace or extend with blind meeting annotations.",
+  "cases": [
+    {
+      "case_id": "explicit-owner-and-deadline",
+      "transcript": "主持人 (00:01:00): 小王请在明天下午五点前提交访谈问题清单。",
+      "expected": [
+        {
+          "title": "提交访谈问题清单",
+          "deliverable": "访谈问题清单",
+          "owner_name": "小王",
+          "deadline_text": "明天下午五点前",
+          "deadline_iso": "2026-08-07T17:00:00+10:00",
+          "source_timestamp": "00:01:00",
+          "source_quote": "小王请在明天下午五点前提交访谈问题清单。",
+          "confidence": 0.97,
+          "needs_confirmation": false,
+          "uncertainties": []
+        }
+      ],
+      "prediction": [
+        {
+          "title": "提交访谈问题清单",
+          "deliverable": "访谈问题清单",
+          "owner_name": "小王",
+          "deadline_text": "明天下午五点前",
+          "deadline_iso": "2026-08-07T17:00:00+10:00",
+          "source_timestamp": "00:01:00",
+          "source_quote": "小王请在明天下午五点前提交访谈问题清单。",
+          "confidence": 0.97,
+          "needs_confirmation": false,
+          "uncertainties": []
+        }
+      ]
+    },
+    {
+      "case_id": "ambiguous-owner-and-deadline",
+      "transcript": "主持人 (00:02:00): 会后需要整理一份竞品对比，具体谁做和时间我们稍后确认。",
+      "expected": [
+        {
+          "title": "整理竞品对比",
+          "deliverable": "竞品对比",
+          "owner_name": null,
+          "deadline_text": null,
+          "deadline_iso": null,
+          "source_timestamp": "00:02:00",
+          "source_quote": "会后需要整理一份竞品对比，具体谁做和时间我们稍后确认。",
+          "confidence": 0.86,
+          "needs_confirmation": true,
+          "uncertainties": ["负责人未明确", "截止时间未明确"]
+        }
+      ],
+      "prediction": [
+        {
+          "title": "整理竞品对比",
+          "deliverable": "竞品对比",
+          "owner_name": null,
+          "deadline_text": null,
+          "deadline_iso": null,
+          "source_timestamp": "00:02:00",
+          "source_quote": "会后需要整理一份竞品对比，具体谁做和时间我们稍后确认。",
+          "confidence": 0.86,
+          "needs_confirmation": true,
+          "uncertainties": ["负责人未明确", "截止时间未明确"]
+        }
+      ]
+    }
+  ]
+}

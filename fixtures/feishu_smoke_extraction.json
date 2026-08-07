@@ -1,0 +1,31 @@
+{
+  "provider": "fixture",
+  "model": "fixture",
+  "input_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+  "action_items": [
+    {
+      "title": "准备7-8个采访问题",
+      "deliverable": "采访问题清单",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:01:00",
+      "source_quote": "王昱翔会后准备七八个采访问题发到群里",
+      "confidence": 0.95,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "整理街头采访破冰话术清单",
+      "deliverable": "破冰话术清单",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:02:00",
+      "source_quote": "另外我这周把街头采访的破冰话术整理成一份清单",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-coworker-coordination-agent"
+version = "0.1.0"
+description = "A deterministic office coordination agent MVP"
+requires-python = ">=3.12"
+dependencies = ["pypdf>=6,<7"]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.3.4,<4"]
+feishu = ["lark-oapi>=1.7,<2"]
+# Office attachment evidence. Optional: without it DOCX/XLSX/PPTX degrade to
+# UNSUPPORTED exactly as before rather than failing a submission.
+office = ["markitdown[docx,xlsx,pptx]>=0.1.7,<0.2"]
+# Real Qwen BPE token counting for the context budget guard. Optional: without
+# it the guard uses a conservative CJK-aware character heuristic.
+tokenizer = ["dashscope[tokenizer]>=1.24,<2"]
+
+[project.scripts]
+collab-agent = "collab_agent.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

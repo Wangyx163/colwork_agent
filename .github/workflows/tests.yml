@@ -1,0 +1,89 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (SQLite, no network)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The Feishu extra pulls lark-oapi, which several tests import. Postgres
+      # is not installed here on purpose: the integration test skips itself
+      # without COLWORK_TEST_POSTGRES_URL, and this job proves the suite passes
+      # on the standard library plus declared extras alone.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[feishu]"
+
+      - name: Run tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
+      # Guards the project's own rule that the deterministic evaluation makes
+      # no external model call, so a regression cannot start spending tokens.
+      - name: Deterministic evaluation
+        env:
+          PYTHONPATH: src
+        run: python -m collab_agent eval --fresh
+
+  postgres:
+    name: integration (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: colwork_app
+          POSTGRES_PASSWORD: colwork_ci
+          POSTGRES_DB: colwork_agent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[postgres,feishu]"
+
+      # Setting the URL is what un-skips the PostgreSQL adapter test, so the
+      # two storage backends are proven to share one domain contract rather
+      # than only the SQLite one being covered.
+      - name: Run tests against PostgreSQL
+        env:
+          PYTHONPATH: src
+          COLWORK_TEST_POSTGRES_URL: postgresql://colwork_app:colwork_ci@127.0.0.1:5432/colwork_agent
+        run: python -m unittest discover -s tests -v
+
+      - name: Deterministic evaluation on PostgreSQL
+        env:
+          PYTHONPATH: src
+          DATABASE_URL: postgresql://colwork_app:colwork_ci@127.0.0.1:5432/colwork_agent
+        run: |
+          printf 'DATABASE_URL=%s\n' "$DATABASE_URL" > .env.local
+          python -m collab_agent eval --postgres --fresh

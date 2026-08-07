@@ -308,9 +308,25 @@ def predicted_sentence_indices(
         quote = normalize(item.get("source_quote") or "")
         if not quote:
             continue
+        # One extracted item cites one sentence, so only its best match may be
+        # credited. Adding every substring hit instead inflated a single item
+        # into ten-plus predicted sentences, because a transcript is full of
+        # short backchannels ("对", "是这个") that any longer quote contains.
+        best_index: int | None = None
+        best_length = 0
         for index, sentence in enumerate(normalized):
-            if sentence and (sentence in quote or quote in sentence):
-                predicted.add(index)
+            if not sentence:
+                continue
+            if sentence == quote:
+                best_index, best_length = index, len(sentence)
+                break
+            if sentence in quote or quote in sentence:
+                overlap = min(len(sentence), len(quote))
+                if overlap > best_length:
+                    best_index, best_length = index, overlap
+        # A two-character coincidence is not a citation.
+        if best_index is not None and best_length >= 4:
+            predicted.add(best_index)
     return predicted
 
 

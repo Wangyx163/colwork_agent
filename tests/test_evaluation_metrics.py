@@ -14,6 +14,7 @@ from collab_agent.extraction_evaluation import (
     load_amc_a,
     load_project_cases,
     normalize,
+    predicted_sentence_indices,
     score_items,
     score_sentences,
     split_sentences,
@@ -54,6 +55,38 @@ class SentenceScoringTests(unittest.TestCase):
         self.assertEqual(score["true_positive"], 0)
         self.assertEqual(score["false_positive"], 1)
         self.assertEqual(score["false_negative"], 1)
+
+    def test_one_item_is_credited_to_one_sentence_only(self) -> None:
+        """A transcript is full of short backchannels, and a longer quote
+        contains them as substrings. Crediting every substring hit turned a
+        single extracted item into ten-plus predicted sentences and destroyed
+        precision across the whole corpus."""
+
+        sentences = [
+            "对。",
+            "是这个。",
+            "嗯。",
+            "小王明天提交访谈问题清单给团队。",
+            "好的。",
+        ]
+        target = meeting(sentences, {3})
+        predicted = predicted_sentence_indices(
+            target, [{"source_quote": "小王明天提交访谈问题清单给团队。"}]
+        )
+        self.assertEqual(predicted, {3})
+
+    def test_a_two_character_coincidence_is_not_a_citation(self) -> None:
+        target = meeting(["对。", "小王明天提交清单。"], {1})
+        predicted = predicted_sentence_indices(target, [{"source_quote": "对"}])
+        self.assertEqual(predicted, set())
+
+    def test_the_best_match_wins_when_several_overlap(self) -> None:
+        sentences = ["提交清单。", "小王明天提交访谈问题清单给团队。"]
+        target = meeting(sentences, {1})
+        predicted = predicted_sentence_indices(
+            target, [{"source_quote": "小王明天提交访谈问题清单给团队"}]
+        )
+        self.assertEqual(predicted, {1})
 
     def test_an_unlocatable_quote_earns_no_credit(self) -> None:
         """A quote that appears nowhere is a fabricated citation, so it must

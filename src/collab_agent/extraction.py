@@ -775,6 +775,30 @@ class BailianExtractor:
             )
         return text, model_payload
 
+    def _forced_final_answer(
+        self,
+        conversation: list[dict[str, Any]],
+        response_payloads: list[dict[str, Any]],
+    ) -> tuple[str, dict[str, Any]]:
+        """Demand the JSON with no tools offered.
+
+        Offering no tools is what puts `response_format: json_object` back on
+        the request, so this is the only turn in a tools run that carries the
+        same format guarantee the one-shot path always has. Used both when the
+        round budget runs out and when a tool-enabled turn answers in prose.
+        """
+
+        conversation = [
+            *conversation,
+            {
+                "role": "user",
+                "content": "查证到此为止。现在只输出最终 JSON，不要再调用工具。",
+            },
+        ]
+        final_payload = self._request(conversation)
+        response_payloads.append(final_payload)
+        return self._lenient_model_payload(final_payload)
+
     def _run_tool_loop(
         self,
         messages: list[dict[str, Any]],
@@ -808,7 +832,18 @@ class BailianExtractor:
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
-                content, model_payload = self._lenient_model_payload(response_payload)
+                try:
+                    content, model_payload = self._lenient_model_payload(
+                        response_payload
+                    )
+                except ExtractionError:
+                    # This turn was sent with tools offered, so it carried no
+                    # `response_format` guarantee and the model was free to
+                    # answer in prose. Rather than fail the chunk, ask once
+                    # more with no tools, which restores the JSON guarantee.
+                    content, model_payload = self._forced_final_answer(
+                        conversation, response_payloads
+                    )
                 return (
                     content,
                     model_payload,
@@ -844,15 +879,9 @@ class BailianExtractor:
         # Out of rounds while still looking things up. Ask once for the answer
         # with no tools offered, so a verbose run still yields candidates
         # instead of throwing away the work already done.
-        conversation.append(
-            {
-                "role": "user",
-                "content": "查证到此为止。现在只输出最终 JSON，不要再调用工具。",
-            }
+        content, model_payload = self._forced_final_answer(
+            conversation, response_payloads
         )
-        final_payload = self._request(conversation)
-        response_payloads.append(final_payload)
-        content, model_payload = self._lenient_model_payload(final_payload)
         return (
             content,
             model_payload,

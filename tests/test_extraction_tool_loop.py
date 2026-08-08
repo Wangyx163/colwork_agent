@@ -158,6 +158,26 @@ class ToolLoopTests(unittest.TestCase):
             "the no-tools path must keep its stricter guarantee",
         )
 
+    def test_a_prose_answer_is_re_asked_with_the_format_guarantee(self) -> None:
+        """A tool-enabled turn has no response_format, so prose is possible.
+
+        This was a real hard failure in the measured run: the turn carrying the
+        final answer still offered tools, so nothing forced JSON.
+        """
+
+        result, extractor = self._extract(
+            [
+                _assistant("好的，我查证完了，下面是我找到的行动项……"),
+                _assistant(json.dumps(FINAL_ANSWER, ensure_ascii=False)),
+            ]
+        )
+
+        self.assertEqual(len(result["items"]), 1)
+        self.assertIsNone(
+            extractor.requests[-1]["tools"],
+            "the re-ask must offer no tools, which is what restores json_object",
+        )
+
     def test_a_fenced_final_answer_is_still_parsed(self) -> None:
         fenced = "```json\n" + json.dumps(FINAL_ANSWER, ensure_ascii=False) + "\n```"
 

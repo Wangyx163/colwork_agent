@@ -139,6 +139,12 @@
         "requires_extra": "feishu",
         "note": "卡片由 notification.v1 的 title/summary/fields/decisions 渲染，不按 effect_type 硬编码；新通知类型无需改渲染器即可正确到达",
         "verified_by": "tests/test_feishu_notification_cards.py"
+      },
+      "AGENT_OBSERVATORY": {
+        "status": "DONE",
+        "requires_extra": null,
+        "note": "/observatory 七个面板；数字复用 metrics.py 与 product_evaluation.py，不重算，有测试逐字段对照 report.json。前端 Vite+React+Tailwind4，构建产物提交，CI 仍是纯 Python。",
+        "verified_by": "tests/test_observatory.py"
       }
     },
     "runtime": {

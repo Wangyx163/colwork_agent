@@ -283,6 +283,42 @@ python -m collab_agent gold-to-extraction `
 
 ---
 
+## Agent Observatory
+
+`http://127.0.0.1:8765/observatory`（需要会议负责人身份）。
+
+一次 Agent 运行拆成七个面板：Context 与授权守卫、成果处理漏斗、人工闸口、
+Effect 与 Outbox、审计时间线、Token 消耗、Lineage 回溯。数字全部来自
+`observatory.py`，而它**复用** `metrics.py` 与 `product_evaluation.py` 已经算好的指标——
+页面不重算，否则同一个事实会有两个数、读者无从判断哪个错。有一组测试逐字段对照
+`report.json`，防止两边悄悄漂移。
+
+几个刻意的取舍：
+
+- **Lineage 按版本索引，不按字段。** 有意思的问题是反着的：选一个已被替换的版本，
+  右侧应该一个字段都不高亮——`GATE-VER-001`「终稿无旧版本混入」从断言变成一次点击能验的事。
+- **Token 用点图 + 四分位，不用密度曲线。** 一次运行只有个位数调用，曲线会画出样本
+  支撑不了的形状，还会把最贵的那一次抹平——而那是唯一有人会找的东西。
+- **确定性评测的 token 是 0，页面直说这是设计目标**，不是缺数据。
+- **语义色与序列色分开。**「人推翻模型 5/6」用序列色，因为它是观测值不是告警。
+
+### 前端
+
+页面源码在 `web/`（Vite + React + Tailwind 4），**构建产物提交在
+`src/collab_agent/static/observatory/`**。这样 clone 之后只要 Python 就能看到页面，
+CI 也不需要 Node。
+
+```powershell
+cd web
+npm install
+npm run build     # 产物直接写进 src/collab_agent/static/observatory/
+```
+
+改完样式记得重新 build 并把产物一起提交——有测试检查产物存在且文件名稳定
+（固定名而非哈希名，否则每次构建都会在 git 里留下上一版）。
+
+---
+
 ## 测试与评测
 
 ```powershell

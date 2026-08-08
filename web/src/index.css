@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* The palette is the one the design draft used, and it is not a matter of
+   taste: the two data-series hues were checked with the palette validator --
+   CVD separation ΔE 27.9 (protan), normal-vision 30.8, chroma floor and
+   contrast passing against both the light and the dark surface. Changing
+   --series-a or --series-b means re-running that check. */
+@theme {
+  --color-ground: #eff1f3;
+  --color-raise: #fcfcfb;
+  --color-sunk: #e5e8eb;
+  --color-ink: #0e1316;
+  --color-ink-2: #4b555c;
+  --color-ink-3: #79848c;
+  --color-rule: #d6dbdf;
+  --color-rule-2: #e7eaed;
+
+  /* Structure. Never encodes a data series. */
+  --color-accent: #2c5d7c;
+  --color-accent-wash: #e2ebf1;
+
+  /* Two-series categorical. Validated; see above. */
+  --color-series-a: #b0781c;
+  --color-series-b: #2563c9;
+
+  /* Status. Reserved -- never reused as a series color. */
+  --color-ok: #2e7245;
+  --color-ok-wash: #e3efe7;
+  --color-warn: #9a6a12;
+  --color-warn-wash: #f6eedc;
+  --color-bad: #a93f33;
+  --color-bad-wash: #f7e7e4;
+
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+/* Dark is selected, not inverted: each token is restepped against the dark
+   surface so contrast and the series separation hold there too. */
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --color-ground: #101314;
+      --color-raise: #1a1a19;
+      --color-sunk: #22262a;
+      --color-ink: #e6e9eb;
+      --color-ink-2: #a6afb6;
+      --color-ink-3: #767f87;
+      --color-rule: #2c3237;
+      --color-rule-2: #23282c;
+      --color-accent: #7faece;
+      --color-accent-wash: #1a2731;
+      --color-ok: #63a97c;
+      --color-ok-wash: #17241b;
+      --color-warn: #c29338;
+      --color-warn-wash: #251e10;
+      --color-bad: #c97c6f;
+      --color-bad-wash: #271916;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --color-ground: #101314;
+    --color-raise: #1a1a19;
+    --color-sunk: #22262a;
+    --color-ink: #e6e9eb;
+    --color-ink-2: #a6afb6;
+    --color-ink-3: #767f87;
+    --color-rule: #2c3237;
+    --color-rule-2: #23282c;
+    --color-accent: #7faece;
+    --color-accent-wash: #1a2731;
+    --color-ok: #63a97c;
+    --color-ok-wash: #17241b;
+    --color-warn: #c29338;
+    --color-warn-wash: #251e10;
+    --color-bad: #c97c6f;
+    --color-bad-wash: #271916;
+  }
+
+  /* An explicit background: the page must not borrow whatever ground the
+     host happens to paint. */
+  body {
+    background-color: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Digits that line up in columns are read as columns. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

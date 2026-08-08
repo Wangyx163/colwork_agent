@@ -1597,6 +1597,44 @@ def serve_dashboard(
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif parsed.path == "/observatory" or parsed.path.startswith(
+                "/observatory/"
+            ):
+                from .static_assets import AssetMissing, read_asset
+
+                try:
+                    body, content_type = read_asset(parsed.path)
+                except AssetMissing:
+                    from .static_assets import MISSING_BUNDLE_PAGE
+
+                    body, content_type = MISSING_BUNDLE_PAGE, "text/html; charset=utf-8"
+                    self.send_response(503)
+                else:
+                    self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif parsed.path == "/api/observatory":
+                from .observatory import build_observatory
+
+                try:
+                    principal = self._principal()
+                    authorization.require_coordinator(principal)
+                except Exception as error:  # noqa: BLE001 - mirrors /api/state
+                    self._json(403, {"message": str(error)})
+                    return
+                requested = parse_qs(parsed.query)
+                self._json(
+                    200,
+                    build_observatory(
+                        service.db,
+                        episode_id=requested.get(
+                            "episode_id", [service.episode_id]
+                        )[0],
+                        run_id=requested.get("run_id", [service.run_id])[0],
+                    ),
+                )
             elif parsed.path == "/api/session/actors":
                 self._json(200, {"actors": principal_provider.list_selectable_actors()})
             elif parsed.path == "/api/state":

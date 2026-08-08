@@ -21,6 +21,13 @@ external/
 fixtures/meeting_gold_*.json
 !fixtures/meeting_gold_TEMPLATE.json
 
+# Frontend build inputs. The build *output* under
+# src/collab_agent/static/ is committed on purpose: a reviewer should be able
+# to clone and run the workbench with Python alone, and CI stays free of Node.
+web/node_modules/
+web/dist/
+web/.vite/
+
 # Third-party corpora are referenced, never vendored. fixtures/SOURCES.md
 # states this project does not copy a full corpus; committing one would
 # contradict that and make every clone carry 16MB of someone else's data.

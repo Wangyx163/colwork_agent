@@ -1,0 +1,4 @@
+Put the meeting you want to serve here: the extraction JSON and the transcript
+named in .env (MEETING_EXTRACTION_FILE / MEETING_TRANSCRIPT_FILE). The directory
+is mounted read-only at /app/meetings. Its contents are gitignored because real
+transcripts carry participant names and meeting content.

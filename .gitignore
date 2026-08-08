@@ -3,6 +3,11 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env.local
+# Compose reads .env automatically; the filled-in copy holds credentials.
+.env
+# Real meeting transcripts and extractions, mounted into the containers.
+meetings/*
+!meetings/.gitkeep
 dist/
 build/
 *.egg-info/

@@ -1,0 +1,116 @@
+name: colwork-agent
+
+# Three long-running pieces, matching how the project is meant to be deployed:
+# PostgreSQL, the web workbench that only handles human interaction, and the
+# Agent Worker that recovers and advances whatever the database says is next.
+# The Feishu long connection is a fourth, behind a profile because it needs
+# credentials and a tenant that most runs will not have.
+#
+# Copy .env.docker.example to .env and edit it before the first `up`.
+
+x-app: &app
+  build: .
+  environment: &app-env
+    DATABASE_URL: postgresql://colwork_app:${POSTGRES_PASSWORD:-colwork_local}@db:5432/colwork_agent
+    COLWORK_SESSION_SECRET: ${COLWORK_SESSION_SECRET:?set COLWORK_SESSION_SECRET in .env}
+    MEETING_EXTRACTION: /app/meetings/${MEETING_EXTRACTION_FILE:-extraction.json}
+    MEETING_TRANSCRIPT: /app/meetings/${MEETING_TRANSCRIPT_FILE:-transcript.txt}
+    MEETING_ORGANIZATION: ${MEETING_ORGANIZATION:?set MEETING_ORGANIZATION in .env}
+    MEETING_COORDINATOR: ${MEETING_COORDINATOR:?set MEETING_COORDINATOR in .env}
+    # Space separated. Display names must not contain spaces, because the
+    # command below word-splits this into repeated --participant flags.
+    MEETING_PARTICIPANTS: ${MEETING_PARTICIPANTS:?set MEETING_PARTICIPANTS in .env}
+    RESULT_PROCESSING: ${RESULT_PROCESSING:-local}
+  volumes:
+    - ./meetings:/app/meetings:ro
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: colwork_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-colwork_local}
+      POSTGRES_DB: colwork_agent
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      # Exposed so the host can inspect the database; the app talks over the
+      # compose network and does not need this.
+      - "${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U colwork_app -d colwork_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  workbench:
+    <<: *app
+    ports:
+      - "${WORKBENCH_PORT:-8766}:8766"
+    # --host 0.0.0.0 is mandatory, not stylistic: the CLI defaults to
+    # 127.0.0.1, which inside a container means the published port answers
+    # nothing at all.
+    command:
+      - sh
+      - -c
+      - >
+        exec python -m collab_agent serve-meeting
+        --extraction "$$MEETING_EXTRACTION"
+        --transcript "$$MEETING_TRANSCRIPT"
+        --organization "$$MEETING_ORGANIZATION"
+        --coordinator "$$MEETING_COORDINATOR"
+        $$(for p in $$MEETING_PARTICIPANTS; do printf ' --participant %s' "$$p"; done)
+        --postgres --result-processing "$$RESULT_PROCESSING"
+        --host 0.0.0.0 --port 8766
+
+  worker:
+    <<: *app
+    command:
+      - sh
+      - -c
+      - >
+        exec python -m collab_agent agent-meeting
+        --extraction "$$MEETING_EXTRACTION"
+        --transcript "$$MEETING_TRANSCRIPT"
+        --organization "$$MEETING_ORGANIZATION"
+        --coordinator "$$MEETING_COORDINATOR"
+        $$(for p in $$MEETING_PARTICIPANTS; do printf ' --participant %s' "$$p"; done)
+        --postgres --result-processing "$$RESULT_PROCESSING"
+        --poll-seconds 2
+
+  feishu:
+    <<: *app
+    profiles: ["feishu"]
+    environment:
+      <<: *app-env
+      FEISHU_APP_ID: ${FEISHU_APP_ID:?set FEISHU_APP_ID in .env}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:?set FEISHU_APP_SECRET in .env}
+    # Long connection: outbound only, so no port is published and no public
+    # address or tunnel is needed.
+    command:
+      - sh
+      - -c
+      - >
+        exec python -m collab_agent feishu-serve
+        --extraction "$$MEETING_EXTRACTION"
+        --transcript "$$MEETING_TRANSCRIPT"
+        --organization "$$MEETING_ORGANIZATION"
+        --coordinator "$$MEETING_COORDINATOR"
+        $$(for p in $$MEETING_PARTICIPANTS; do printf ' --participant %s' "$$p"; done)
+        --postgres
+
+  # One-shot: the deterministic evaluation, no external model call. Run with
+  # `docker compose run --rm eval`.
+  eval:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "-m", "collab_agent", "eval", "--postgres", "--fresh"]
+
+volumes:
+  db-data:

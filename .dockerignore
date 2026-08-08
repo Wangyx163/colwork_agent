@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+var
+datasets
+external
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.pytest_cache
+
+# Credentials are injected as environment variables and materialised by the
+# entrypoint. Baking this file into an image would ship the secret with it.
+.env.local

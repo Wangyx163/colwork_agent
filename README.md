@@ -160,6 +160,28 @@ python -m collab_agent feishu-serve `
 
 ---
 
+## Docker
+
+三个长驻部件对应真实部署形态：PostgreSQL、只处理人机交互的网页工作台、恢复并推进数据库里下一步的 Agent Worker。飞书长连接是第四个，放在 profile 后面，因为它需要凭据和真实租户。
+
+```bash
+cp .env.docker.example .env      # 编辑：密码、会话密钥、会议与参会名单
+cp <你的抽取结果> meetings/extraction.json
+cp <你的逐字稿>   meetings/transcript.txt
+
+docker compose up -d --build     # db + workbench + worker
+docker compose --profile feishu up -d       # 追加飞书长连接
+docker compose --profile tools run --rm eval   # 确定性评测
+```
+
+工作台在 `http://localhost:8766`。
+
+> **尚未验证。** 这套 compose 是按代码实际行为写的，但作者机器上没有安装 Docker，所以从未真正 build 或 up 过。第一次跑如果有问题，最可能出在镜像构建的依赖解析上。
+
+两个不显然的点：容器里必须传 `--host 0.0.0.0`，CLI 默认 `127.0.0.1` 会让发布出去的端口什么都不响应；`DATABASE_URL` 只从 `.env.local` 读而不认环境变量（这是刻意的，防止工作台和 Worker 被环境里的游离变量拆到两个库），所以入口脚本会用 compose 传进来的值现场生成这个文件。
+
+---
+
 ## 测试与评测
 
 ```powershell

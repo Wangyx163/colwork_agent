@@ -208,6 +208,45 @@ def _parser() -> argparse.ArgumentParser:
         "--report", default="var/extraction-evaluation.json"
     )
 
+    annotation = subparsers.add_parser(
+        "check-annotation",
+        help="validate a hand-annotated meeting file before using it as truth",
+    )
+    annotation.add_argument("--cases", required=True)
+
+    link = subparsers.add_parser(
+        "link",
+        help="propose, list and decide links to action items from earlier meetings",
+    )
+    link.add_argument(
+        "action",
+        choices=("propose", "list", "confirm", "reject"),
+    )
+    link.add_argument("--db", default="var/meeting.sqlite3")
+    link.add_argument("--postgres", action="store_true")
+    link.add_argument(
+        "--episode-id",
+        default="",
+        help="defaults to the most recently created episode",
+    )
+    link.add_argument(
+        "--actor",
+        default="",
+        help=(
+            "whose history may be searched; the pool is limited to earlier "
+            "meetings this person attended. Accepts a display name."
+        ),
+    )
+    link.add_argument("--link-id", default="", help="for confirm / reject")
+    link.add_argument(
+        "--with-model",
+        action="store_true",
+        help=(
+            "also ask Bailian for links the deterministic floor cannot see "
+            "(consumes tokens)"
+        ),
+    )
+
     bind = subparsers.add_parser(
         "feishu-bind",
         help="bind one meeting participant to their Feishu open_id",
@@ -335,6 +374,19 @@ def _open_database(args: argparse.Namespace) -> Database:
     return database
 
 
+def _resolve_actor(database: Database, actor: str) -> str:
+    """Accept a display name where an actor id is wanted.
+
+    Every authorisation check keys on the internal id, so the id is what gets
+    stored; resolving here just lets a person type the name they know.
+    """
+
+    row = database.one(
+        "SELECT actor_id FROM actors WHERE display_name = ?", (actor,)
+    )
+    return dict(row)["actor_id"] if row else actor
+
+
 def _build_feishu_im(database: object, *, dry_run: bool):
     from .feishu_config import load_feishu_config
     from .feishu_im import FeishuIM, LarkTransport, RecordingTransport
@@ -427,6 +479,134 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "database yet. If you meant a meeting participant, load the "
                     "meeting first and re-run against the same --db.",
                 )
+            return 0
+        finally:
+            database.close()
+    if args.command == "link":
+        from .feishu_app import real_now
+        from .linkage import (
+            bailian_completer,
+            decide_link,
+            ensure_schema,
+            links_for,
+            propose_for_action_item,
+        )
+
+        database = _open_database(args)
+        try:
+            ensure_schema(database)
+            episode_id = args.episode_id
+            if not episode_id:
+                row = database.one(
+                    "SELECT episode_id FROM episodes "
+                    "ORDER BY created_sim_time DESC, episode_id LIMIT 1"
+                )
+                if not row:
+                    print("no episodes in this database")
+                    return 1
+                episode_id = dict(row)["episode_id"]
+            run_row = database.one(
+                "SELECT run_id FROM episodes WHERE episode_id = ?", (episode_id,)
+            )
+            run_id = dict(run_row)["run_id"] if run_row else "run"
+
+            if args.action in {"confirm", "reject"}:
+                if not args.link_id:
+                    print("--link-id is required to confirm or reject")
+                    return 2
+                if not args.actor:
+                    print("--actor is required: a decision records who made it")
+                    return 2
+                actor_id = _resolve_actor(database, args.actor)
+                outcome = decide_link(
+                    database,
+                    run_id=run_id,
+                    link_id=args.link_id,
+                    approve=args.action == "confirm",
+                    actor_id=actor_id,
+                    sim_time=real_now(),
+                )
+                print(json.dumps(outcome, ensure_ascii=False, indent=2))
+                return 0
+
+            items = [
+                dict(row)
+                for row in database.all(
+                    "SELECT * FROM action_items WHERE episode_id = ? "
+                    "ORDER BY created_sim_time, action_item_id",
+                    (episode_id,),
+                )
+            ]
+
+            if args.action == "list":
+                report = []
+                for item in items:
+                    links = links_for(
+                        database, action_item_id=item["action_item_id"]
+                    )
+                    for link in links:
+                        prior = database.one(
+                            "SELECT title, episode_id FROM action_items "
+                            "WHERE action_item_id = ?",
+                            (link["prior_action_item_id"],),
+                        )
+                        report.append(
+                            {
+                                "link_id": link["link_id"],
+                                "status": link["status"],
+                                "relation": link["relation"],
+                                "source": link["source"],
+                                "this_task": item["title"],
+                                "prior_task": dict(prior)["title"] if prior else "?",
+                                "prior_meeting": (
+                                    dict(prior)["episode_id"] if prior else "?"
+                                ),
+                                "reason": link["reason"],
+                            }
+                        )
+                print(
+                    json.dumps(
+                        {"episode_id": episode_id, "links": report},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+
+            if not args.actor:
+                print(
+                    "--actor is required: the searchable history is limited to "
+                    "meetings that person attended"
+                )
+                return 2
+            actor_id = _resolve_actor(database, args.actor)
+            complete = bailian_completer() if args.with_model else None
+            results = []
+            for item in items:
+                outcome = propose_for_action_item(
+                    database,
+                    run_id=run_id,
+                    episode_id=episode_id,
+                    action_item=item,
+                    actor_id=actor_id,
+                    sim_time=real_now(),
+                    complete=complete,
+                )
+                if outcome["proposals"]:
+                    results.append({"title": item["title"], **outcome})
+            print(
+                json.dumps(
+                    {
+                        "episode_id": episode_id,
+                        "actor_id": actor_id,
+                        "used_model": bool(complete),
+                        "action_items_scanned": len(items),
+                        "with_proposals": results,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
         finally:
             database.close()
@@ -593,6 +773,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         finally:
             database.close()
         return 0
+    if args.command == "check-annotation":
+        from .annotation_check import check_annotation_file
+
+        report = check_annotation_file(args.cases)
+        for problem in report["problems"]:
+            where = f'[{problem["case"]}'
+            if problem["item"] is not None:
+                where += f' 条目#{problem["item"]}'
+            where += "]"
+            print(f'{problem["level"]:<7} {where} {problem["message"]}')
+        print()
+        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+        if report["valid"]:
+            print(
+                f'\n通过：{report["summary"]["annotated_items"]} 条标注可用'
+                f'（{report["warning_count"]} 条提醒）'
+            )
+            return 0
+        print(f'\n未通过：{report["error_count"]} 个错误必须修复')
+        return 1
     if args.command == "eval-product":
         from .product_evaluation import build_product_evaluation
 

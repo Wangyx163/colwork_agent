@@ -610,6 +610,18 @@ class BailianExtractor:
             else ACTION_ITEM_EXTRACTION_PROMPT_VERSION
         )
 
+    def complete_json(self, messages: list[dict[str, str]]) -> str:
+        """One JSON-constrained completion, with this class's retry policy.
+
+        Public so other model-backed steps can reuse the request layer -- its
+        retry classification and error codes -- instead of growing a second
+        copy of the HTTP client alongside it.
+        """
+
+        payload = self._request(messages)
+        content, _ = self._model_payload(payload)
+        return content
+
     def _request_body(
         self,
         messages: list[dict[str, Any]],

@@ -220,6 +220,32 @@ python -m collab_agent eval-extraction `
 
 ---
 
+## 跨会议关联
+
+一条新行动项是不是在延续以往会议中的某一条？现在没人知道，只能靠人记。
+
+```powershell
+# 提议（确定性地板，零 token）
+python -m collab_agent link propose --postgres --actor "王昱翔"
+# 加上模型，找地板看不出的改述延续（消耗 token）
+python -m collab_agent link propose --postgres --actor "王昱翔" --with-model
+
+python -m collab_agent link list --postgres
+python -m collab_agent link confirm --postgres --link-id lnk_xxx --actor "王昱翔"
+```
+
+**授权边界直接沿用参会名单**：候选池 = 同组织 + 不同 Episode + **请求人当时在那场会的名单里**。在这场会不等于有资格看上一场——这条有专门的测试，也覆盖了"另一个组织的行动项永不出现"。
+
+**没做检索，是全上下文。** 候选池整个塞进 prompt。三场会 18 条行动项渲染后不到一千 token，授权过滤后更少。检索要到千条量级（百场会议以上）才成为必需，现在做就是无法测量的基础设施——这跟砍掉 `agent_result_cache` 是同一条纪律。`candidate_pool` 是将来插入检索的唯一位置。
+
+**为什么这里该用模型。** 确定性地板（`DeterministicLinker`）能抓 `identity_key` 相同和标题高度相似，零成本，因此模型必须赢过它才算称职。地板抓不到的是「整理采访问题清单」延续「汇总大家提的问题清单」——同一件事，无共同子串。而语义延续**没有可事后比对的真值字符串**，无法用确定性代码事后修复。这正好通过了工具调用那次没通过的判据。
+
+**模型不能做的**：提议一个不在候选池里的 id。每个返回的 id 都对池校验，编造的直接丢弃——跟 `source_quote` 同一套接地纪律。`PROPOSED` 不改变任何任务状态，只有人能把它变成 `CONFIRMED`；`UNIQUE(action_item_id, prior_action_item_id)` 保证重跑提议器不会复活一条已被否决的关联。
+
+> 真实库里暂时演示不出效果：两场 ACISC 会议的参会名单完全不重叠，所以按授权规则任何人的候选池都是 0。逻辑由 26 个测试覆盖（含一个人跨两场会的场景），但要在真实数据上看到提议，需要先有同一个人参加过的两场会。
+
+---
+
 ## 测试与评测
 
 ```powershell

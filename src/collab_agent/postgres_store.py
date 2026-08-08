@@ -169,6 +169,39 @@ class PostgresDatabase:
                     f"ALTER TABLE action_items ADD COLUMN IF NOT EXISTS "
                     f"{column} {definition}"
                 )
+            # Cross-meeting linkage. Added here as well as in the schema file
+            # because an existing database never re-runs the schema script.
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_item_links (
+                    link_id TEXT PRIMARY KEY,
+                    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+                    action_item_id TEXT NOT NULL
+                        REFERENCES action_items(action_item_id),
+                    prior_action_item_id TEXT NOT NULL
+                        REFERENCES action_items(action_item_id),
+                    relation TEXT NOT NULL CHECK (
+                        relation IN ('CONTINUATION', 'DUPLICATE')
+                    ),
+                    status TEXT NOT NULL CHECK (
+                        status IN ('PROPOSED', 'CONFIRMED', 'REJECTED')
+                    ),
+                    source TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    confidence DOUBLE PRECISION,
+                    proposed_by_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+                    proposed_sim_time TEXT NOT NULL,
+                    decided_by_actor_id TEXT REFERENCES actors(actor_id),
+                    decided_sim_time TEXT,
+                    CHECK (action_item_id <> prior_action_item_id),
+                    UNIQUE(action_item_id, prior_action_item_id)
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS action_item_link_lookup "
+                "ON action_item_links(action_item_id, status)"
+            )
             cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS assistance_requests (

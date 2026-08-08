@@ -229,6 +229,30 @@ CREATE TABLE action_item_dependencies (
     UNIQUE (upstream_action_item_id, downstream_action_item_id)
 );
 
+-- Proposed continuity between an action item and one from an earlier meeting.
+-- A PROPOSED row changes no task state; only a person moves it to CONFIRMED.
+-- The UNIQUE pair makes re-running the proposer a no-op, so a link somebody
+-- already rejected is never resurrected.
+CREATE TABLE action_item_links (
+    link_id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),
+    prior_action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),
+    relation TEXT NOT NULL CHECK (relation IN ('CONTINUATION', 'DUPLICATE')),
+    status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'CONFIRMED', 'REJECTED')),
+    source TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    confidence DOUBLE PRECISION,
+    proposed_by_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    proposed_sim_time TEXT NOT NULL,
+    decided_by_actor_id TEXT REFERENCES actors(actor_id),
+    decided_sim_time TEXT,
+    CHECK (action_item_id <> prior_action_item_id),
+    UNIQUE(action_item_id, prior_action_item_id)
+);
+CREATE INDEX action_item_link_lookup
+ON action_item_links(action_item_id, status);
+
 CREATE TABLE action_item_participation_inputs (
     contribution_id TEXT PRIMARY KEY,
     episode_id TEXT NOT NULL REFERENCES episodes(episode_id),

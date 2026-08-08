@@ -196,7 +196,133 @@ def build_ack_card(*, title: str, body: str, template: str = "green") -> dict[st
     }
 
 
-def render_command(command: dict[str, Any]) -> tuple[str, str]:
-    """Default renderer: every outbox effect becomes an interactive card."""
+NOTIFICATION_TEMPLATES = {
+    "ASSIGNMENT_RESPONSE_REQUIRED": "blue",
+    "ASSISTANCE_REQUESTED": "orange",
+    "VOTE_REQUIRED": "purple",
+    "RESULT_PENDING_REVIEW": "turquoise",
+    "REVIEW_DECIDED": "green",
+}
 
+# Decisions whose reason can be picked from a fixed list. Anything else that
+# needs typing has to happen on the web: a card picker cannot collect free text
+# in the same tap, and a decision recorded without its required reason would be
+# refused by the domain anyway.
+DECISION_REASON_PRESETS = {
+    "ASSIGNMENT_RETURN": RETURN_REASONS,
+}
+
+
+def build_notification_card(command: dict[str, Any]) -> dict[str, Any]:
+    """Render a card from the `notification` contract the domain emits.
+
+    The domain already states what a notification says and which decisions it
+    offers -- `_notify` builds title, summary, fields and decisions in one
+    place. Rendering from that rather than switching on effect_type means a new
+    notification type reaches Feishu correctly without this module learning
+    about it, and a decision can never appear on a card that the service has no
+    command for.
+    """
+
+    notification = command.get("notification") or {}
+    effect_id = str(command.get("effect_id", ""))
+    kind = str(notification.get("kind") or command.get("effect_type") or "")
+    title = str(notification.get("title") or "")
+    summary = str(notification.get("summary") or "")
+
+    elements: list[dict[str, Any]] = []
+    if summary:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": summary}})
+
+    fields = notification.get("fields") or []
+    if fields:
+        elements.append(
+            {
+                "tag": "div",
+                "fields": [
+                    {
+                        "is_short": True,
+                        "text": {
+                            "tag": "lark_md",
+                            "content": f'**{field.get("label")}**\n{field.get("value")}',
+                        },
+                    }
+                    for field in fields
+                ],
+            }
+        )
+
+    base_value = {
+        "effect_id": effect_id,
+        "effect_type": kind,
+        "action_item_id": str(notification.get("action_item_id") or ""),
+        "subject_id": str(notification.get("subject_id") or ""),
+    }
+
+    actions: list[dict[str, Any]] = []
+    web_only: list[str] = []
+    for decision in notification.get("decisions") or []:
+        name = str(decision.get("name") or "")
+        label = str(decision.get("label") or name)
+        if decision.get("score_options"):
+            # Scoring several options is a form, not a tap.
+            web_only.append(label)
+            continue
+        presets = DECISION_REASON_PRESETS.get(name)
+        if decision.get("requires_reason") and not presets:
+            web_only.append(label)
+            continue
+        if presets:
+            actions.append(
+                {
+                    "tag": "select_static",
+                    "placeholder": {"tag": "plain_text", "content": f"{label}（选择原因）"},
+                    "value": {**base_value, "action": name},
+                    "options": [
+                        {"text": {"tag": "plain_text", "content": reason}, "value": reason}
+                        for reason in presets
+                    ],
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": label},
+                    "type": "primary",
+                    "value": {**base_value, "action": name},
+                }
+            )
+
+    if actions:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "action", "actions": actions})
+
+    footer = f"EffectId {effect_id}"
+    if web_only:
+        footer = f'{"、".join(web_only)} 需要在网页工作台完成 · {footer}'
+    elements.append(
+        {"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]}
+    )
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": NOTIFICATION_TEMPLATES.get(kind, "blue"),
+            "title": {"tag": "plain_text", "content": title or kind or "通知"},
+        },
+        "elements": elements,
+    }
+
+
+def render_command(command: dict[str, Any]) -> tuple[str, str]:
+    """Every outbox effect becomes an interactive card.
+
+    A command carrying the `notification` contract is rendered from it; the
+    projected assignment cards, which the notifier builds directly, keep the
+    older path.
+    """
+
+    if command.get("notification"):
+        return "interactive", canonical_json(build_notification_card(command))
     return "interactive", canonical_json(build_effect_card(command))

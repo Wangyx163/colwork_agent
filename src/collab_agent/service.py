@@ -2844,6 +2844,7 @@ class CoordinationService:
         fields: list[dict[str, str]] | None = None,
         decisions: list[dict[str, Any]] | None = None,
         deep_link_path: str = "/tasks",
+        subject_id: str = "",
     ) -> str | None:
         """Queue one human-facing notification through the existing Outbox.
 
@@ -2866,6 +2867,11 @@ class CoordinationService:
             "notification_contract_version": "notification.v1",
             "kind": effect_type,
             "action_item_id": action_item_id,
+            # The entity a decision acts on, when that is not the action item
+            # itself -- an assistance request, for instance. Kept separate from
+            # trigger_key, which is an idempotency key and is composite at
+            # several call sites.
+            "subject_id": subject_id,
             "title": title,
             "summary": summary,
             "fields": fields or [],
@@ -3703,6 +3709,7 @@ class CoordinationService:
                 correlation_id=correlation_id,
                 sim_time=sim_time,
                 trigger_key=assistance_request_id,
+                subject_id=assistance_request_id,
             )
             signal_valid_until = self._record_owner_signal(
                 cursor,

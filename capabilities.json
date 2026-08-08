@@ -116,8 +116,10 @@
         "verified_by": "tests/test_feishu_commands.py"
       },
       "FEISHU_ASSISTANCE_AND_SIGNALS": {
-        "status": "NOT_DONE",
-        "note": "求助与快捷状态尚未搬到飞书"
+        "status": "DONE",
+        "requires_extra": "feishu",
+        "note": "求助卡片从领域的 notification 契约渲染，「我来接手」直达 update_assistance；解决需要说明做了什么，一次点击给不了，仍在网页。快捷状态未搬（是主动上报，不是被动响应）。",
+        "verified_by": "tests/test_feishu_notification_cards.py"
       },
       "FEISHU_VOTE_CARD": {
         "status": "NOT_DONE"
@@ -129,6 +131,12 @@
       "FEISHU_TASK_SYNC": {
         "status": "WILL_NOT_DO",
         "note": "刻意不做。同步到飞书 Task 会产生第二个工作流数据库，破坏 single source of truth"
+      },
+      "FEISHU_NOTIFICATION_CONTRACT": {
+        "status": "DONE",
+        "requires_extra": "feishu",
+        "note": "卡片由 notification.v1 的 title/summary/fields/decisions 渲染，不按 effect_type 硬编码；新通知类型无需改渲染器即可正确到达",
+        "verified_by": "tests/test_feishu_notification_cards.py"
       }
     },
     "runtime": {

@@ -19,6 +19,14 @@ DEFAULT_RETURN_REASONS = (
 )
 
 
+# Decision names the domain emits in its notification contract, mapped to the
+# assistance action they request. Anything not listed is refused rather than
+# guessed at, so a stale card cannot drive a command it was never offered.
+ASSISTANCE_DECISIONS = {
+    "ASSISTANCE_ACKNOWLEDGE": "ACKNOWLEDGE",
+}
+
+
 class UnknownCardAction(ValueError):
     """The card asked for something the bridge does not implement."""
 
@@ -83,8 +91,45 @@ class AssignmentBridge:
         self.service = service
         self.log = log
 
+    def _handle_assistance(
+        self, record: dict[str, Any], action_name: str
+    ) -> dict[str, Any]:
+        """Acknowledge a help request from its card.
+
+        Only acknowledgement is offered on a card: resolving requires a summary
+        of what was done, which a tap cannot supply and the domain refuses
+        without.
+        """
+
+        actor_id = record.get("actor_id")
+        if not actor_id:
+            raise PermissionError(
+                f"open_id {record.get('operator_open_id')} is not bound to a "
+                "participant; a click from an unknown person is never a decision"
+            )
+        subject_id = _payload_of(record).get("subject_id")
+        if not subject_id:
+            raise UnresolvableEffect(
+                "card click carried no subject_id; cannot tell which help "
+                "request it answers"
+            )
+        result = self.service.update_assistance(
+            str(subject_id),
+            actor_id=str(actor_id),
+            action=ASSISTANCE_DECISIONS[action_name],
+            message_id=str(record["event_key"]),
+        )
+        if self.log is not None:
+            self.log(
+                f"[feishu] {actor_id} {action_name} {subject_id} "
+                f"-> {result.get('status')}"
+            )
+        return result
+
     def handle(self, record: dict[str, Any]) -> dict[str, Any]:
         action_name = str(record.get("action_name", ""))
+        if action_name in ASSISTANCE_DECISIONS:
+            return self._handle_assistance(record, action_name)
         if action_name not in DECISIONS:
             raise UnknownCardAction(f"card action {action_name!r} is not supported")
         actor_id = record.get("actor_id")

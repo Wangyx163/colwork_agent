@@ -84,7 +84,7 @@ flowchart TB
 python -m pip install -e ".[feishu]"
 $env:PYTHONPATH = "src"
 
-# 227 个测试，零外部调用
+# 全部测试，零外部模型调用
 python -m unittest discover -s tests
 
 # 确定性 P0 场景评测，输出 var/report.json
@@ -223,7 +223,7 @@ python -m collab_agent eval-extraction `
 ## 测试与评测
 
 ```powershell
-python -m unittest discover -s tests -v          # 227 个，含飞书适配器契约、崩溃恢复、幂等、权限边界
+python -m unittest discover -s tests -v          # 265 个，含飞书适配器契约、崩溃恢复、幂等、权限边界
 python -m collab_agent eval --fresh              # 确定性 P0 场景
 python -m collab_agent eval-ai-p0 --fresh        # AI 工程 Harness，零外部调用
 python -m collab_agent eval-product              # 人工成本、引用率、Token、闸口

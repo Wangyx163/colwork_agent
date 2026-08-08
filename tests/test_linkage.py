@@ -18,6 +18,7 @@ from collab_agent.linkage import (
     links_for,
     propose_for_action_item,
     record_proposals,
+    resolve_link_id,
 )
 from collab_agent.store import Database
 
@@ -537,6 +538,43 @@ class StorageAndDecisionTests(LinkageTestCase):
             "SELECT event_type FROM audit_events WHERE aggregate_id = ?", ("ai_new",)
         )
         self.assertIn("ActionItemLinksProposed", [dict(r)["event_type"] for r in rows])
+
+    def test_a_unique_prefix_resolves_like_a_short_commit_id(self) -> None:
+        link_id = self._store()[0]
+
+        self.assertEqual(resolve_link_id(self.database, link_id[:10]), link_id)
+        self.assertEqual(resolve_link_id(self.database, link_id), link_id)
+
+    def test_an_ambiguous_prefix_asks_for_more_rather_than_guessing(self) -> None:
+        self._store()
+        record_proposals(
+            self.database,
+            run_id="run",
+            episode_id="ep_new",
+            action_item_id="ai_new",
+            proposals=[
+                LinkProposal(
+                    prior_action_item_id="ai_old_venue",
+                    relation="DUPLICATE",
+                    reason="第二条",
+                    confidence=0.5,
+                    source="MODEL",
+                )
+            ],
+            proposed_by_actor_id="jia",
+            sim_time=SIM_TIME,
+        )
+
+        with self.assertRaises(LinkageError) as caught:
+            resolve_link_id(self.database, "lnk")
+
+        self.assertIn("2", str(caught.exception))
+
+    def test_an_unknown_prefix_is_refused(self) -> None:
+        self._store()
+
+        with self.assertRaises(LinkageError):
+            resolve_link_id(self.database, "lnk_nothing")
 
     def test_summary_counts_by_status_and_source(self) -> None:
         self._store()

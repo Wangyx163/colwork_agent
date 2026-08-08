@@ -523,11 +523,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "link":
         from .feishu_app import real_now
         from .linkage import (
+            LinkageError,
             bailian_completer,
             decide_link,
             ensure_schema,
             links_for,
             propose_for_action_item,
+            resolve_link_id,
         )
 
         database = _open_database(args)
@@ -556,14 +558,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print("--actor is required: a decision records who made it")
                     return 2
                 actor_id = _resolve_actor(database, args.actor)
-                outcome = decide_link(
-                    database,
-                    run_id=run_id,
-                    link_id=args.link_id,
-                    approve=args.action == "confirm",
-                    actor_id=actor_id,
-                    sim_time=real_now(),
-                )
+                try:
+                    link_id = resolve_link_id(database, args.link_id)
+                    outcome = decide_link(
+                        database,
+                        run_id=run_id,
+                        link_id=link_id,
+                        approve=args.action == "confirm",
+                        actor_id=actor_id,
+                        sim_time=real_now(),
+                    )
+                except LinkageError as error:
+                    print(str(error))
+                    return 1
                 print(json.dumps(outcome, ensure_ascii=False, indent=2))
                 return 0
 

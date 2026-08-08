@@ -9,10 +9,14 @@
 # The two meetings are 42 minutes apart on the same evening, which is why they
 # share tasks: the second is the follow-up to the first.
 
+# The model runs by default. Without it the deterministic floor finds nothing
+# on this pair -- it scores every candidate 0.37-0.50 whether related or not --
+# so a run without it produces an empty result that reads like a broken demo.
+# -NoModel skips it when only the scores are wanted.
 param(
     [string]$Db = "var/linkage-demo.sqlite3",
     [string]$Downloads = "$env:USERPROFILE\Downloads",
-    [switch]$WithModel
+    [switch]$NoModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,8 +68,14 @@ $linkArgs = @(
     "-m", "collab_agent", "link", "propose",
     "--db", $Db, "--actor", "王昱翔", "--show-scores"
 )
-if ($WithModel) { $linkArgs += "--with-model" }
-& $python @linkArgs
+if (-not $NoModel) { $linkArgs += "--with-model" }
+# Explicit encoding: `>` defaults to UTF-16LE here, which the reader rejects.
+$runFile = Join-Path $env:TEMP "linkage-demo-run.json"
+& $python @linkArgs | Out-File -FilePath $runFile -Encoding utf8
+if ($LASTEXITCODE -ne 0) { throw "link propose failed" }
+
+& $python scripts/report_linkage_demo.py $runFile
 
 Write-Host "`n演示库: $Db"
 Write-Host "查看提议:  $python -m collab_agent link list --db $Db"
+Write-Host "确认一条:  $python -m collab_agent link confirm --db $Db --link-id <前几位即可> --actor 王昱翔"

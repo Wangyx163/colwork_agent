@@ -436,6 +436,32 @@ def record_proposals(
     return stored
 
 
+def resolve_link_id(database: Any, prefix: str) -> str:
+    """Accept a unique prefix, the way git accepts a short commit id.
+
+    A demo that requires pasting a 36-character uuid is a demo that stalls on
+    a copy-paste. Matching is done in Python rather than with SQL LIKE so the
+    pattern characters in a prefix can never be reinterpreted by either
+    backend's placeholder handling.
+    """
+
+    prefix = str(prefix or "").strip()
+    if not prefix:
+        raise LinkageError("link id is required")
+    known = [
+        dict(row)["link_id"]
+        for row in database.all("SELECT link_id FROM action_item_links")
+    ]
+    matches = [link_id for link_id in known if link_id.startswith(prefix)]
+    if not matches:
+        raise LinkageError(f"没有以 {prefix!r} 开头的关联")
+    if len(matches) > 1:
+        raise LinkageError(
+            f"{prefix!r} 匹配到 {len(matches)} 条关联，请多给几位：{matches[:4]}"
+        )
+    return matches[0]
+
+
 def decide_link(
     database: Any,
     *,

@@ -350,3 +350,81 @@ class FrozenStateTests(unittest.TestCase):
         self.assertIn("run_at", state)
         # A dirty tree means the committed prompt is not what actually ran.
         self.assertIn("working_tree_clean", state)
+
+
+class RosterResolutionTests(unittest.TestCase):
+    """A transcript calls people whatever the speakers call them. The extractor
+    has no roster, so it writes the spoken form, and an exact string comparison
+    then reports a correctly identified person as an error."""
+
+    ROSTER = ["黄Z恒", "王昱翔", "榨椰汁", "张静雅", "绒", "宋潽暄"]
+
+    def test_a_fuller_spoken_form_resolves_to_the_roster_entry(self) -> None:
+        from collab_agent.extraction_evaluation import resolve_participant
+
+        self.assertEqual(resolve_participant("苏绒", self.ROSTER), "绒")
+        self.assertEqual(resolve_participant("静雅", self.ROSTER), "张静雅")
+
+    def test_a_nickname_that_is_not_a_substring_stays_unresolved(self) -> None:
+        """«子恒» for «黄Z恒» needs the human-confirmed alias map. Guessing here
+        would let the scorer credit an identification the system never made."""
+
+        from collab_agent.extraction_evaluation import resolve_participant
+
+        self.assertIsNone(resolve_participant("子恒", self.ROSTER))
+
+    def test_an_ambiguous_name_refuses_to_resolve(self) -> None:
+        from collab_agent.extraction_evaluation import resolve_participant
+
+        self.assertIsNone(resolve_participant("小明", ["小明月", "小明星"]))
+
+    def test_a_sentence_fragment_does_not_swallow_a_roster_name(self) -> None:
+        from collab_agent.extraction_evaluation import resolve_participant
+
+        self.assertIsNone(
+            resolve_participant("那你就需要在文案这边多下点功夫", self.ROSTER)
+        )
+
+    def test_owner_scoring_credits_the_same_person_named_differently(self) -> None:
+        target = LabelledMeeting(
+            meeting_id="m",
+            transcript="就苏绒和金霞你们两个去写脚本。",
+            sentences=["就苏绒和金霞你们两个去写脚本。"],
+            positive_sentence_indices={0},
+            expected_items=[
+                {
+                    "title": "写脚本",
+                    "source_quote": "就苏绒和金霞你们两个去写脚本。",
+                    "owner_name": "绒",
+                }
+            ],
+            participants=self.ROSTER,
+        )
+        score = score_items(
+            target,
+            [
+                {
+                    "title": "写脚本",
+                    "source_quote": "就苏绒和金霞你们两个去写脚本。",
+                    "owner_name": "苏绒",
+                }
+            ],
+        )
+        self.assertEqual(score["field_accuracy"]["owner_name"], 1.0)
+
+    def test_a_genuinely_wrong_person_is_still_wrong(self) -> None:
+        target = LabelledMeeting(
+            meeting_id="m",
+            transcript="就苏绒去写脚本。",
+            sentences=["就苏绒去写脚本。"],
+            positive_sentence_indices={0},
+            expected_items=[
+                {"title": "写脚本", "source_quote": "就苏绒去写脚本。", "owner_name": "绒"}
+            ],
+            participants=self.ROSTER,
+        )
+        score = score_items(
+            target,
+            [{"title": "写脚本", "source_quote": "就苏绒去写脚本。", "owner_name": "王昱翔"}],
+        )
+        self.assertEqual(score["field_accuracy"]["owner_name"], 0.0)

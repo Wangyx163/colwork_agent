@@ -352,6 +352,57 @@ def score_sentences(
     )
 
 
+MAX_PERSON_NAME_LENGTH = 12
+
+
+def resolve_participant(name: Any, participants: Iterable[str]) -> str | None:
+    """Map a name as spoken in a transcript onto one roster entry.
+
+    A transcript calls people whatever the speakers call them -- «苏绒» for the
+    person the roster lists as «绒», «静雅» for «张静雅». The extractor has no
+    roster, so it faithfully writes the spoken form, and an exact string
+    comparison then reports a correctly identified person as an error.
+
+    Returns None when nothing matches and, deliberately, also when more than
+    one entry does: an ambiguous name must not be silently resolved to
+    whichever roster entry happened to come first. Nicknames that are not a
+    substring either way («子恒» for «黄Z恒») stay unresolved here; those need
+    the human-confirmed alias map, not a guess.
+    """
+
+    text = str(name or "").strip()
+    if not text:
+        return None
+    roster = [str(person).strip() for person in participants if str(person).strip()]
+    folded = text.casefold()
+    for person in roster:
+        if person.casefold() == folded:
+            return person
+    # Only a plausible person name may be resolved by containment; a sentence
+    # fragment would otherwise swallow whichever roster name it happens to hold.
+    if len(text) > MAX_PERSON_NAME_LENGTH:
+        return None
+    candidates = [
+        person
+        for person in roster
+        if person.casefold() in folded or folded in person.casefold()
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _same_person(
+    expected: Any, predicted: Any, participants: Iterable[str]
+) -> bool:
+    roster = list(participants)
+    if not roster:
+        return normalize(expected or "") == normalize(predicted or "")
+    left = resolve_participant(expected, roster)
+    right = resolve_participant(predicted, roster)
+    if left is not None and right is not None:
+        return left == right
+    return normalize(expected or "") == normalize(predicted or "")
+
+
 def _matches(expected: dict[str, Any], predicted: dict[str, Any]) -> bool:
     """One expected item is matched by the prediction citing the same evidence.
 
@@ -377,6 +428,7 @@ def score_items(
     meeting: LabelledMeeting, items: list[dict[str, Any]]
 ) -> dict[str, Any]:
     expected = meeting.expected_items
+    roster = meeting.participants
     unmatched = list(items)
     matched_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for want in expected:
@@ -401,20 +453,28 @@ def score_items(
     collaborator_hits = 0
     collaborator_total = 0
     for want, got in matched_pairs:
-        wanted_collaborators = {
-            normalize(name) for name in want.get("collaborator_names") or [] if name
-        }
+        def as_people(names: Any) -> set[str]:
+            resolved = set()
+            for name in names or []:
+                if not name:
+                    continue
+                person = resolve_participant(name, roster) if roster else None
+                resolved.add(person or normalize(name))
+            return resolved
+
+        wanted_collaborators = as_people(want.get("collaborator_names"))
         if wanted_collaborators:
             collaborator_total += 1
-            got_collaborators = {
-                normalize(name) for name in got.get("collaborator_names") or [] if name
-            }
-            if wanted_collaborators == got_collaborators:
+            if wanted_collaborators == as_people(got.get("collaborator_names")):
                 collaborator_hits += 1
         for name in field_hits:
             if want.get(name) in (None, ""):
                 continue
             field_total[name] += 1
+            if name == "owner_name":
+                if _same_person(want.get(name), got.get(name), roster):
+                    field_hits[name] += 1
+                continue
             if normalize(want.get(name) or "") == normalize(got.get(name) or ""):
                 field_hits[name] += 1
     groundable = 0

@@ -16,7 +16,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Linting */
+    /* Linting. `strict` is what makes a nullable API field an error instead of
+       a crash: this page reads a server payload where several fields are null
+       for an episode still in flight. */
+    "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

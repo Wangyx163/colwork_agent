@@ -68,11 +68,42 @@ class AgreesWithTheCanonicalReportTests(unittest.TestCase):
             results["validation_failed"], canonical["validation_failed_versions"]
         )
 
-    def test_audit_total_matches(self) -> None:
-        self.assertEqual(
-            self.view["audit"]["total"],
-            self.report["evidence_refs"]["audit_sequence"]["count"],
+    def test_audit_total_is_the_table_not_a_recount(self) -> None:
+        """The headline number must be the audit log's own length."""
+
+        rows = dict(
+            self.db.one(
+                "SELECT count(*) AS n FROM audit_events WHERE run_id = ?",
+                ("run_p0",),
+            )
         )
+
+        self.assertEqual(self.view["audit"]["total"], rows["n"])
+
+    def test_the_range_the_report_covers_is_unchanged(self) -> None:
+        """Scoped to the report's own range on purpose.
+
+        report.json froze the run at the moment `eval` produced it. Serving
+        the demo database afterwards appends genuine audit events -- opening
+        the workbench issues a session, and that is a real thing that
+        happened. Comparing totals would therefore fail for the ordinary
+        reason that somebody used the app, which says nothing about whether
+        the Observatory agrees with the canonical metrics. What must hold is
+        that everything the report counted is still there, untouched.
+        """
+
+        covered = self.report["evidence_refs"]["audit_sequence"]
+        still_there = dict(
+            self.db.one(
+                "SELECT count(*) AS n, min(sequence_no) AS lo "
+                "FROM audit_events WHERE run_id = ? AND sequence_no <= ?",
+                ("run_p0", covered["last"]),
+            )
+        )
+
+        self.assertEqual(still_there["n"], covered["count"])
+        self.assertEqual(still_there["lo"], covered["first"])
+        self.assertGreaterEqual(self.view["audit"]["total"], covered["count"])
 
 
 @unittest.skipUnless(P0_DB.exists(), "needs var/p0.sqlite3")

@@ -4,10 +4,13 @@ import unittest
 from pathlib import Path
 
 from collab_agent.static_assets import (
-    OBSERVATORY_ROOT,
+    ASSET_PREFIX,
+    BUNDLE_ROOT,
+    PAGE_ROUTES,
     AssetMissing,
     bundle_exists,
     read_asset,
+    serves,
 )
 
 
@@ -26,7 +29,7 @@ class BundleShippedTests(unittest.TestCase):
         self.assertTrue(
             bundle_exists(),
             "run `npm run build` in web/ and commit "
-            "src/collab_agent/static/observatory/",
+            "src/collab_agent/static/console/",
         )
 
     def test_the_entry_files_are_the_stable_names_vite_was_told_to_emit(self) -> None:
@@ -34,8 +37,24 @@ class BundleShippedTests(unittest.TestCase):
 
         for name in ("index.html", "app.js", "app.css"):
             self.assertTrue(
-                (OBSERVATORY_ROOT / name).is_file(), f"{name} missing from bundle"
+                (BUNDLE_ROOT / name).is_file(), f"{name} missing from bundle"
             )
+
+    def test_one_bundle_backs_every_page(self) -> None:
+        """A second bundle would put React in the repository twice."""
+
+        self.assertEqual(
+            sorted(path.name for path in BUNDLE_ROOT.parent.iterdir()),
+            ["console"],
+        )
+
+    def test_the_markup_points_at_the_shared_asset_prefix(self) -> None:
+        """Vite's `base` and ASSET_PREFIX have to agree or nothing loads."""
+
+        markup = (BUNDLE_ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn(f'src="{ASSET_PREFIX}/app.js"', markup)
+        self.assertIn(f'href="{ASSET_PREFIX}/app.css"', markup)
 
     def test_the_bundle_is_not_gitignored(self) -> None:
         # Comments are stripped first: .gitignore explains *why* the bundle is
@@ -56,16 +75,34 @@ class BundleShippedTests(unittest.TestCase):
         )
 
 
-class AssetResolutionTests(unittest.TestCase):
-    def test_the_bare_route_serves_the_page(self) -> None:
-        body, content_type = read_asset("/observatory")
+class RouteOwnershipTests(unittest.TestCase):
+    def test_every_page_route_and_the_asset_prefix_are_claimed(self) -> None:
+        for path in (ASSET_PREFIX, *PAGE_ROUTES):
+            self.assertTrue(serves(path), path)
+            self.assertTrue(serves(f"{path}/app.js"), path)
 
-        self.assertIn(b"<!doctype html>", body.lower())
-        self.assertEqual(content_type, "text/html; charset=utf-8")
+    def test_the_workbench_routes_are_left_alone(self) -> None:
+        """/tasks stays on the server-rendered page; claiming it would 404 it."""
+
+        for path in ("/", "/tasks", "/diagnostics", "/api/state"):
+            self.assertFalse(serves(path), path)
+
+    def test_a_lookalike_prefix_is_not_claimed(self) -> None:
+        self.assertFalse(serves("/manageable"))
+        self.assertFalse(serves("/consoles/app.js"))
+
+
+class AssetResolutionTests(unittest.TestCase):
+    def test_every_page_route_serves_the_page(self) -> None:
+        for route in PAGE_ROUTES:
+            body, content_type = read_asset(route)
+
+            self.assertIn(b"<!doctype html>", body.lower(), route)
+            self.assertEqual(content_type, "text/html; charset=utf-8", route)
 
     def test_assets_get_their_own_content_type(self) -> None:
-        _, js = read_asset("/observatory/app.js")
-        _, css = read_asset("/observatory/app.css")
+        _, js = read_asset(f"{ASSET_PREFIX}/app.js")
+        _, css = read_asset(f"{ASSET_PREFIX}/app.css")
 
         self.assertEqual(js, "text/javascript; charset=utf-8")
         self.assertEqual(css, "text/css; charset=utf-8")
@@ -80,13 +117,14 @@ class AssetResolutionTests(unittest.TestCase):
 
     def test_a_missing_asset_is_refused_rather_than_answered_with_html(self) -> None:
         with self.assertRaises(AssetMissing):
-            read_asset("/observatory/does-not-exist.js")
+            read_asset(f"{ASSET_PREFIX}/does-not-exist.js")
 
     def test_path_traversal_cannot_reach_the_source_tree(self) -> None:
         for attempt in (
-            "/observatory/../../service.py",
-            "/observatory/../../../.env.local",
-            "/observatory/..%2f..%2fservice.py",
+            f"{ASSET_PREFIX}/../../service.py",
+            f"{ASSET_PREFIX}/../../../.env.local",
+            "/manage/../../service.py",
+            f"{ASSET_PREFIX}/..%2f..%2fservice.py",
         ):
             with self.assertRaises(AssetMissing, msg=attempt):
                 read_asset(attempt)

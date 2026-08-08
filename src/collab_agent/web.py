@@ -346,6 +346,14 @@ def _task_activity(
                 ),
                 "detail": f'承诺截止：{revision["promised_deadline_sim_time"]}',
                 "status": revision["status"],
+                # The same instant the prose carries, kept apart from it: the
+                # schedule bar draws a superseded promise where it used to sit,
+                # and digging a date back out of a sentence would break the
+                # first time the sentence is reworded.
+                "promised_deadline_sim_time": revision[
+                    "promised_deadline_sim_time"
+                ],
+                "revision_no": int(revision["revision_no"]),
                 "actor": actor_names.get(
                     revision["owner_actor_id"], revision["owner_actor_id"]
                 ),
@@ -1590,16 +1598,16 @@ def serve_dashboard(
 
         def do_GET(self) -> None:  # noqa: N802 - standard library API
             parsed = urlparse(self.path)
-            if parsed.path in ("/", "/tasks", "/manage", "/diagnostics"):
+            from .static_assets import serves as bundle_serves
+
+            if parsed.path in ("/", "/tasks", "/diagnostics"):
                 body = WORKBENCH_HTML.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
-            elif parsed.path == "/observatory" or parsed.path.startswith(
-                "/observatory/"
-            ):
+            elif bundle_serves(parsed.path):
                 from .static_assets import AssetMissing, read_asset
 
                 try:

@@ -22,6 +22,7 @@ from collab_agent.extraction import (
 def valid_item() -> dict:
     return {
         "title": "调研平台机制",
+        "item_type": "TASK",
         "deliverable": "一份调研摘要",
         "owner_name": None,
         "deadline_text": None,
@@ -568,3 +569,38 @@ class ExtractionContractTests(unittest.TestCase):
         self.assertEqual(resumed["checkpoint_hit_count"], 2)
         self.assertEqual(resumed["summary"]["total"], 1)
         self.assertEqual(urlopen.call_count, 0)
+
+
+class ItemTypeContractTests(unittest.TestCase):
+    """COMMITMENT exists because a time point the meeting agreed to has no
+    deliverable of its own, and the deliverable requirement silently dropped it.
+    """
+
+    def test_a_payload_without_a_type_normalizes_to_task(self) -> None:
+        item = valid_item()
+        item.pop("item_type")
+        normalized, actions = normalize_extraction_payload({"action_items": [item]})
+        self.assertEqual(normalized["action_items"][0]["item_type"], "TASK")
+        self.assertIn("action_items[0].item_type:missing_to_task", actions)
+
+    def test_an_unknown_type_is_repaired_rather_than_trusted(self) -> None:
+        item = valid_item()
+        item["item_type"] = "SOMETHING_ELSE"
+        normalized, actions = normalize_extraction_payload({"action_items": [item]})
+        self.assertEqual(normalized["action_items"][0]["item_type"], "TASK")
+        self.assertIn("action_items[0].item_type:invalid_to_task", actions)
+
+    def test_a_commitment_survives_validation_without_a_product(self) -> None:
+        item = valid_item()
+        item["item_type"] = "COMMITMENT"
+        item["title"] = "方案拍板"
+        item["deliverable"] = "完成方案拍板"
+        item["source_quote"] = "争取后天我们就再拍板"
+        validated = validate_extraction({"action_items": [item]})
+        self.assertEqual(validated[0].item_type, "COMMITMENT")
+
+    def test_validation_rejects_a_type_outside_the_contract(self) -> None:
+        item = valid_item()
+        item["item_type"] = "IDEA"
+        with self.assertRaisesRegex(ExtractionError, "item_type"):
+            validate_extraction({"action_items": [item]})

@@ -21,7 +21,13 @@ DEFAULT_BAILIAN_ENDPOINT = (
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 )
 DEFAULT_BAILIAN_MODEL = "qwen-plus"
-ACTION_ITEM_EXTRACTION_PROMPT_VERSION = "meeting-action-items.v1.3"
+ACTION_ITEM_EXTRACTION_PROMPT_VERSION = "meeting-action-items.v1.4"
+# The tool-calling variant is a separate version rather than an edit of v1.4,
+# so evaluation numbers from the two stay comparable and either can be run
+# against the same corpus without invalidating the other's history.
+ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION = "meeting-action-items.tools.v2.0"
+MAX_TOOL_ROUNDS = 6
+ITEM_TYPES = ("TASK", "COMMITMENT")
 TIMESTAMP_PATTERN = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 TRANSCRIPT_LINE_PATTERN = re.compile(
     r"^(?P<speaker>.+?)\((?P<timestamp>\d{2}:\d{2}:\d{2})\):\s*(?P<text>.*)$"
@@ -46,6 +52,10 @@ class ExtractionError(RuntimeError):
 @dataclass(frozen=True)
 class ExtractedActionItem:
     title: str
+    # TASK produces something; COMMITMENT is a time point the meeting agreed
+    # to with no artefact of its own. Older extractions carry no type, so the
+    # default keeps them readable.
+    item_type: str
     deliverable: str
     owner_name: str | None
     deadline_text: str | None
@@ -86,6 +96,16 @@ def normalize_extraction_payload(
                 item[field] = None
                 actions.append(f"{prefix}.{field}:blank_to_null")
 
+        raw_type = str(item.get("item_type") or "").strip().upper()
+        if raw_type not in ITEM_TYPES:
+            # Everything extracted before v1.4 was a deliverable-bearing task.
+            item["item_type"] = "TASK"
+            if raw_type:
+                actions.append(f"{prefix}.item_type:invalid_to_task")
+            else:
+                actions.append(f"{prefix}.item_type:missing_to_task")
+        else:
+            item["item_type"] = raw_type
         if "needs_confirmation" not in item:
             item["needs_confirmation"] = True
             actions.append(f"{prefix}.needs_confirmation:missing_to_true")
@@ -156,6 +176,11 @@ def validate_extraction(payload: dict[str, Any]) -> list[ExtractedActionItem]:
         if missing:
             raise ExtractionError(f"action_items[{index}] missing fields: {missing}")
         title = str(item["title"]).strip()
+        item_type = str(item.get("item_type") or "TASK").strip().upper()
+        if item_type not in ITEM_TYPES:
+            raise ExtractionError(
+                f"action_items[{index}].item_type must be one of {list(ITEM_TYPES)}"
+            )
         deliverable = str(item["deliverable"]).strip()
         timestamp = str(item["source_timestamp"]).strip()
         quote = str(item["source_quote"]).strip()
@@ -213,6 +238,7 @@ def validate_extraction(payload: dict[str, Any]) -> list[ExtractedActionItem]:
         validated.append(
             ExtractedActionItem(
                 title=title,
+                item_type=item_type,
                 deliverable=deliverable,
                 owner_name=owner,
                 deadline_text=deadline_text,
@@ -480,12 +506,25 @@ def _system_prompt() -> str:
 11. 发言人不等于负责人。只有原文明说“某人负责/某人去做”，或发言人明确说“我来/我会/我负责/我去做”时，owner_name 才能填写；“我觉得可以”“可以尝试”等建议不是认领。
 12. 排除会议中已经当场执行的动作（例如正在敲屏幕、滚动文档、现场问 GPT）以及纯讨论、假设和选题建议；只有会议后仍需完成并产生结果、提交、跟进或实际执行的行动才抽取。
 13. collaborator_names 只记录同一条任务证据中明确说出的合作关系，例如“甲和乙一起做/乙配合甲/甲与乙协作”；不得把参会、讨论、群内查看、投票或普通建议推断成合作。没有明确合作关系时必须为 []。
+14. item_type 取 TASK 或 COMMITMENT，二选一：
+    - TASK：会后要做出东西或完成动作，有可验收的交付内容。deliverable 按第 9 条填写。
+    - COMMITMENT：本次会议当场约定的时间节点，没有可交付物本身。例如“争取后天再拍板”“月底三十号一大早出发”“周五之前给答复”。
+      这类只有时间承诺、没有产出物，按 TASK 的交付物要求会被漏掉，但它同样需要进入会议纪要。
+      COMMITMENT 的 deliverable 填对该节点的中性描述（如“完成方案拍板”“团队出发”），不得编造产出物。
+15. COMMITMENT 必须同时满足三个条件，否则不要抽取：
+    a. 原文含明确时间点或期限（后天、月底三十号、周五之前、下午三点）；
+    b. 是本次会议当场做出的约定或决定，不是在陈述惯例、流程或既有安排；
+    c. 承诺主体是本次与会方（我们/咱们/你/某人），不是泛指的第三方。
+    以下一律不抽取：会议背景与前提（“今年公司要组织员工出去游玩”）、
+    对惯例或流程的描述（“早上男方要去接亲”“北方一般六七点接女方”）、
+    含“可能/大概/也许”的模糊意向（“近期可能要办一些活动”）。
 
 返回对象必须是：
 {
   "action_items": [
     {
       "title": "简短任务名",
+      "item_type": "TASK 或 COMMITMENT",
       "deliverable": "可验收的交付内容",
       "owner_name": "逐字稿中明确的人名或 null",
       "deadline_text": "原文截止描述或 null",
@@ -501,6 +540,36 @@ def _system_prompt() -> str:
 }"""
 
 
+def _tools_system_prompt() -> str:
+    """v1.4's rules, plus the obligation to verify a citation before writing it.
+
+    Only the evidence discipline differs from `_system_prompt`. Every semantic
+    rule about what counts as an action item is reused verbatim, so a
+    difference in evaluation scores can be attributed to the tools rather than
+    to a quietly reworded task definition.
+    """
+
+    return (
+        _system_prompt()
+        + """
+
+本次你可以调用工具查阅逐字稿。请按以下顺序工作：
+
+A. 先通读片段，列出你怀疑是行动项的地方。
+B. 对每一条候选，在写出 source_quote 之前，必须先用 search_transcript 查到那句话。
+   把工具返回的 text 和 timestamp 原样复制进 source_quote 和 source_timestamp，
+   不要凭记忆重写、不要改写数量词或语气词。工具返回什么就写什么。
+C. 无法判断一句话是布置任务还是随口讨论时，用 get_context 看它前后几句再决定。
+D. 准备填写 owner_name 前，先用 list_speakers 确认这个人确实在本片段发过言；
+   没查到就填 null，不要猜。
+E. 如果 search_transcript 找不到你想引用的话（match_type 为 none，
+   或只有低相似度的 fuzzy 结果），说明这条证据不存在，直接放弃该候选，
+   不要退而求其次引用一句相近的话。
+
+查证完成后，只输出最终 JSON，不要解释查证过程，不要输出 Markdown 代码块。"""
+    )
+
+
 class BailianExtractor:
     def __init__(
         self,
@@ -513,6 +582,8 @@ class BailianExtractor:
         retry_backoff_seconds: float = 1.0,
         max_chunk_characters: int = 3500,
         chunk_overlap_lines: int = 6,
+        use_tools: bool = False,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
     ):
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
         if not self.api_key:
@@ -526,15 +597,56 @@ class BailianExtractor:
         self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self.max_chunk_characters = max(1000, int(max_chunk_characters))
         self.chunk_overlap_lines = max(0, int(chunk_overlap_lines))
+        self.use_tools = bool(use_tools)
+        self.max_tool_rounds = max(1, int(max_tool_rounds))
 
-    def _request_once(self, messages: list[dict[str, str]]) -> dict[str, Any]:
-        body = {
+    @property
+    def prompt_version(self) -> str:
+        """Which prompt this instance actually ran, for the run record."""
+
+        return (
+            ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION
+            if self.use_tools
+            else ACTION_ITEM_EXTRACTION_PROMPT_VERSION
+        )
+
+    def _request_body(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Build the chat-completions body.
+
+        Separated from the network call so the tools/response_format rule
+        below can be asserted directly rather than through a mock.
+        """
+
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.1,
-            "response_format": {"type": "json_object"},
             "enable_thinking": False,
         }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+            # `response_format: json_object` is deliberately omitted while
+            # tools are offered: a turn that calls a tool has no JSON body to
+            # produce, and forcing the format makes providers reject the call
+            # or emit an empty object instead of the tool call. The final
+            # answer is parsed leniently instead.
+        else:
+            body["response_format"] = {"type": "json_object"}
+        return body
+
+    def _request_once(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        body = self._request_body(messages, tools=tools)
         request = urllib.request.Request(
             self.endpoint,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -583,10 +695,15 @@ class BailianExtractor:
             ) from error
         return response_payload
 
-    def _request(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def _request(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         for attempt in range(1, self.max_request_attempts + 1):
             try:
-                response_payload = self._request_once(messages)
+                response_payload = self._request_once(messages, tools=tools)
                 response_payload["_adapter_request_attempts"] = attempt
                 return response_payload
             except ExtractionError as error:
@@ -615,6 +732,137 @@ class BailianExtractor:
                 retryable=True,
             )
         return content, model_payload
+
+    @staticmethod
+    def _lenient_model_payload(
+        response_payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Parse a final answer produced without `response_format` enforcement.
+
+        Only fenced-code stripping is tolerated. Anything looser would start
+        inventing structure, and this payload still has to pass
+        `validate_extraction` unchanged.
+        """
+
+        try:
+            content = response_payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise ExtractionError(
+                "Bailian returned no assistant content",
+                error_code="INVALID_JSON",
+                stage="MODEL_RESPONSE",
+                retryable=True,
+            ) from error
+        text = str(content or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            model_payload = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ExtractionError(
+                "Bailian returned a non-JSON final answer",
+                error_code="INVALID_JSON",
+                stage="MODEL_RESPONSE",
+                retryable=True,
+            ) from error
+        if not isinstance(model_payload, dict):
+            raise ExtractionError(
+                "Bailian returned an invalid action-item payload",
+                error_code="INVALID_SCHEMA",
+                stage="MODEL_RESPONSE",
+                retryable=True,
+            )
+        return text, model_payload
+
+    def _run_tool_loop(
+        self,
+        messages: list[dict[str, Any]],
+        tools: "TranscriptTools",
+    ) -> tuple[str, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        """Let the model look things up, then take its final JSON answer.
+
+        Returns the final content, the parsed payload, every response payload
+        seen (so token accounting stays whole), and a summary of what was
+        looked up.
+        """
+
+        from .extraction_tools import TOOL_SCHEMAS
+
+        conversation = list(messages)
+        response_payloads: list[dict[str, Any]] = []
+        rounds = 0
+
+        for rounds in range(1, self.max_tool_rounds + 1):
+            response_payload = self._request(conversation, tools=TOOL_SCHEMAS)
+            response_payloads.append(response_payload)
+            try:
+                message = response_payload["choices"][0]["message"]
+            except (KeyError, IndexError, TypeError) as error:
+                raise ExtractionError(
+                    "Bailian returned no message in a tool round",
+                    error_code="INVALID_JSON",
+                    stage="MODEL_RESPONSE",
+                    retryable=True,
+                ) from error
+
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                content, model_payload = self._lenient_model_payload(response_payload)
+                return (
+                    content,
+                    model_payload,
+                    response_payloads,
+                    {
+                        "tool_rounds": rounds,
+                        "tool_calls": list(tools.call_log),
+                        "hit_round_limit": False,
+                    },
+                )
+
+            # The assistant turn must be echoed back verbatim, tool_calls and
+            # all, or the provider cannot match the tool results to it.
+            conversation.append(message)
+            for call in tool_calls:
+                function = call.get("function") or {}
+                raw_arguments = function.get("arguments") or "{}"
+                try:
+                    arguments = json.loads(raw_arguments)
+                except (json.JSONDecodeError, TypeError):
+                    # A malformed argument string is the model's mistake to
+                    # see and correct, not grounds to abandon the extraction.
+                    arguments = {}
+                result = tools.call(str(function.get("name", "")), arguments)
+                conversation.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+
+        # Out of rounds while still looking things up. Ask once for the answer
+        # with no tools offered, so a verbose run still yields candidates
+        # instead of throwing away the work already done.
+        conversation.append(
+            {
+                "role": "user",
+                "content": "查证到此为止。现在只输出最终 JSON，不要再调用工具。",
+            }
+        )
+        final_payload = self._request(conversation)
+        response_payloads.append(final_payload)
+        content, model_payload = self._lenient_model_payload(final_payload)
+        return (
+            content,
+            model_payload,
+            response_payloads,
+            {
+                "tool_rounds": rounds,
+                "tool_calls": list(tools.call_log),
+                "hit_round_limit": True,
+            },
+        )
 
     @staticmethod
     def _semantic_identity(item: ExtractedActionItem) -> tuple[Any, ...]:
@@ -672,8 +920,13 @@ class BailianExtractor:
         chunk_index: int,
         chunk_count: int,
     ) -> dict[str, Any]:
-        messages = [
-            {"role": "system", "content": _system_prompt()},
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    _tools_system_prompt() if self.use_tools else _system_prompt()
+                ),
+            },
             {
                 "role": "user",
                 "content": (
@@ -684,8 +937,20 @@ class BailianExtractor:
                 ),
             },
         ]
-        response_payloads = [self._request(messages)]
-        content, model_payload = self._model_payload(response_payloads[0])
+        tool_summary: dict[str, Any] | None = None
+        if self.use_tools:
+            from .extraction_tools import TranscriptTools
+
+            # Scoped to this chunk, matching the instruction above: tools that
+            # could reach the whole transcript would let the model cite
+            # evidence from a chunk it was told not to extract from.
+            tools = TranscriptTools(transcript_chunk)
+            content, model_payload, response_payloads, tool_summary = (
+                self._run_tool_loop(messages, tools)
+            )
+        else:
+            response_payloads = [self._request(messages)]
+            content, model_payload = self._model_payload(response_payloads[0])
         model_payload, normalization_actions = normalize_extraction_payload(
             model_payload
         )
@@ -766,6 +1031,7 @@ class BailianExtractor:
             "collaboration_evidence_repairs": collaboration_evidence_repairs,
             "owner_evidence_repairs": owner_evidence_repairs,
             "normalization_actions": normalization_actions,
+            "tool_summary": tool_summary,
         }
 
     def extract(
@@ -791,13 +1057,16 @@ class BailianExtractor:
         collaboration_evidence_repairs = 0
         owner_evidence_repairs = 0
         normalization_actions: list[str] = []
+        tool_summaries: list[dict[str, Any]] = []
         checkpoint_hit_count = 0
         for index, chunk in enumerate(chunks, start=1):
             checkpoint_key = stable_hash(
                 {
                     "transcript_sha256": transcript_hash,
                     "meeting_date": meeting_date,
-                    "prompt_version": ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
+                    # Mode-aware, so a tools run never reuses a checkpoint
+                    # written by the one-shot prompt or the other way round.
+                    "prompt_version": self.prompt_version,
                     "model": self.model,
                     "chunk_index": index,
                     "chunk_count": len(chunks),
@@ -850,6 +1119,7 @@ class BailianExtractor:
                             "normalization_actions": list(
                                 cached.get("normalization_actions") or []
                             ),
+                            "tool_summary": cached.get("tool_summary"),
                         }
                         if not chunk_result["response_payloads"]:
                             chunk_result = None
@@ -902,6 +1172,7 @@ class BailianExtractor:
                         "normalization_actions": chunk_result[
                             "normalization_actions"
                         ],
+                        "tool_summary": chunk_result.get("tool_summary"),
                     }
                     temporary_path = checkpoint_path.with_suffix(".tmp")
                     temporary_path.write_text(
@@ -928,6 +1199,9 @@ class BailianExtractor:
                 chunk_result["owner_evidence_repairs"]
             )
             normalization_actions.extend(chunk_result["normalization_actions"])
+            chunk_tool_summary = chunk_result.get("tool_summary")
+            if chunk_tool_summary:
+                tool_summaries.append({"chunk": index, **chunk_tool_summary})
         items = validate_extraction(
             {"action_items": [asdict(item) for item in all_items]}
         )
@@ -943,7 +1217,7 @@ class BailianExtractor:
             "schema_version": "1.0",
             "provider": "bailian",
             "model": response_payload.get("model", self.model),
-            "prompt_version": ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
+            "prompt_version": self.prompt_version,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "input_sha256": transcript_hash,
             "input_characters": len(transcript),
@@ -951,6 +1225,36 @@ class BailianExtractor:
             "checkpoint_hit_count": checkpoint_hit_count,
             "normalization_count": len(normalization_actions),
             "normalization_actions": normalization_actions,
+            # Present only for a tools run. Every lookup is recorded so the
+            # evidence in a candidate can be traced to the query that found
+            # it, the same way source_quote traces to the transcript.
+            "tool_use": (
+                {
+                    "prompt_version": self.prompt_version,
+                    "total_rounds": sum(
+                        int(summary.get("tool_rounds", 0))
+                        for summary in tool_summaries
+                    ),
+                    "total_calls": sum(
+                        len(summary.get("tool_calls") or [])
+                        for summary in tool_summaries
+                    ),
+                    "failed_calls": sum(
+                        1
+                        for summary in tool_summaries
+                        for call in (summary.get("tool_calls") or [])
+                        if not call.get("ok")
+                    ),
+                    "chunks_hitting_round_limit": sum(
+                        1
+                        for summary in tool_summaries
+                        if summary.get("hit_round_limit")
+                    ),
+                    "per_chunk": tool_summaries,
+                }
+                if tool_summaries
+                else None
+            ),
             "usage": self._usage(response_payloads),
             "model_call_count": len(response_payloads),
             "transport_attempt_count": sum(
@@ -970,7 +1274,7 @@ class BailianExtractor:
                 "entity_versions": {
                     "transcript_sha256": transcript_hash,
                 },
-                "prompt_version": ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
+                "prompt_version": self.prompt_version,
                 "skill_version": None,
                 "input_hash": invocation_input_hash,
                 "output_status": "SUCCEEDED",
@@ -997,12 +1301,13 @@ def extract_file(
     *,
     model: str | None = None,
     meeting_date: str | None = None,
+    use_tools: bool = False,
 ) -> dict[str, Any]:
     source = Path(input_path)
     destination = Path(output_path)
     checkpoint_dir = destination.parent / ".checkpoints" / destination.stem
     transcript = read_text_file(source)
-    result = BailianExtractor(model=model).extract(
+    result = BailianExtractor(model=model, use_tools=use_tools).extract(
         transcript,
         meeting_date=meeting_date,
         checkpoint_dir=checkpoint_dir,

@@ -182,6 +182,42 @@ docker compose --profile tools run --rm eval   # 确定性评测
 
 ---
 
+## 抽取：让模型先查证再引用
+
+默认抽取是一次性的——模型读一遍片段就吐候选，`source_quote` 事后跟原文比对，对不上就触发一次"证据修复"请求，仍然对不上就丢弃。那是事后补救：模型已经凭记忆写下了引用。
+
+`--tools` 把顺序反过来。模型可以先查再写，而工具返回的正是校验器稍后要比对的那个字符串：
+
+```powershell
+python -m collab_agent extract --input meeting.txt --output out.json --tools
+```
+
+三个工具，全部只读，且只能看它已经被展示的那个片段：
+
+| 工具 | 用途 |
+|---|---|
+| `search_transcript` | 按内容查发言，返回逐字原文和时间戳；精确命中优先，退化到模糊匹配时会带相似度 |
+| `get_context` | 看某个时间戳前后几句，判断这句话是真在派活还是随口讨论 |
+| `list_speakers` | 本片段谁发过言；填 `owner_name` 前必须确认此人真的出现过 |
+
+**复制工具返回值是逐字的，回忆不是**——这是这件事唯一的收益来源。工具不放宽任何校验：`validate_extraction` 和 `validate_source_evidence` 一行没改，候选仍然要过 schema、仍然要人确认。
+
+prompt 是**独立版本** `meeting-action-items.tools.v2.0`，v1.4 原样保留。工具版的系统提示逐字包含 v1.4 的全部语义规则，只追加证据纪律——所以评测分数的差异只能归因于工具，不能归因于任务定义被悄悄改写。checkpoint key 也带 prompt 版本，两种模式不会互相复用缓存。
+
+两个版本可以在同一份语料上直接对打：
+
+```powershell
+python -m collab_agent eval-extraction `
+  --alimeeting4mug <数据集根目录> --split dev --limit 5 `
+  --with-project-chain --with-project-chain-tools
+```
+
+输出里的 `tool_use` 记录每次查询、失败调用数和触发轮次上限的片段数——查证过程本身可审计，跟 `source_quote` 可回溯是同一套纪律。工具轮次会额外消耗 token，`usage` 把每一轮都算进去了。
+
+> 收益尚未测量。离线逻辑有 33 个测试覆盖，但工具是否真的提升引用准确率，要在真实语料上跑上面那条对打命令才知道。测不出提升就应该删掉——"做了、测了、没用、删了"本身是个结论。
+
+---
+
 ## 测试与评测
 
 ```powershell

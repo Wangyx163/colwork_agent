@@ -130,13 +130,21 @@ def replay_extractor(predictions_by_meeting: dict[str, list[dict[str, Any]]]):
 
 
 def project_chain_extractor(
-    *, meeting_date_default: str = "", checkpoint_dir: str | None = None
+    *,
+    meeting_date_default: str = "",
+    checkpoint_dir: str | None = None,
+    use_tools: bool = False,
 ):
-    """This project's real chain: chunking, schema validation, quote repair."""
+    """This project's real chain: chunking, schema validation, quote repair.
+
+    `use_tools` switches the same chain onto the tool-calling prompt, so the
+    two can be scored side by side on one corpus. Everything downstream of the
+    model call is identical, which is what makes the comparison mean anything.
+    """
 
     from .extraction import BailianExtractor
 
-    extractor = BailianExtractor()
+    extractor = BailianExtractor(use_tools=use_tools)
 
     def extract(meeting: LabelledMeeting) -> list[dict[str, Any]]:
         result = extractor.extract(

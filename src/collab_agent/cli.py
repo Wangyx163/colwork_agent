@@ -68,6 +68,14 @@ def _parser() -> argparse.ArgumentParser:
     extract.add_argument("--output", default="var/extractions/latest.json")
     extract.add_argument("--model", default=None)
     extract.add_argument("--meeting-date", default=None)
+    extract.add_argument(
+        "--tools",
+        action="store_true",
+        help=(
+            "let the model look quotes up in the transcript before citing them; "
+            "uses a separately versioned prompt and costs extra rounds"
+        ),
+    )
     meeting = subparsers.add_parser(
         "serve-meeting", help="import extracted action items and serve the collaboration workbench"
     )
@@ -187,6 +195,14 @@ def _parser() -> argparse.ArgumentParser:
         "--with-project-chain",
         action="store_true",
         help="also run this project's full extraction chain (consumes tokens)",
+    )
+    extraction_eval.add_argument(
+        "--with-project-chain-tools",
+        action="store_true",
+        help=(
+            "also run the chain on the tool-calling prompt; pair with "
+            "--with-project-chain to score both on one corpus (consumes tokens)"
+        ),
     )
     extraction_eval.add_argument(
         "--report", default="var/extraction-evaluation.json"
@@ -505,6 +521,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.output,
             model=args.model,
             meeting_date=args.meeting_date,
+            use_tools=args.tools,
         )
         print(
             json.dumps(
@@ -650,6 +667,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             extractors["single_prompt_baseline"] = single_prompt_extractor()
         if args.with_project_chain:
             extractors["project_chain"] = project_chain_extractor()
+        if args.with_project_chain_tools:
+            extractors["project_chain_tools"] = project_chain_extractor(
+                use_tools=True
+            )
         report = compare_extractors(meetings, extractors)
         report_path = Path(args.report)
         report_path.parent.mkdir(parents=True, exist_ok=True)

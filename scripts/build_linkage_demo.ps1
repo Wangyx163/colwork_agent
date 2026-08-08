@@ -76,6 +76,7 @@ if ($LASTEXITCODE -ne 0) { throw "link propose failed" }
 
 & $python scripts/report_linkage_demo.py $runFile
 
-Write-Host "`n演示库: $Db"
-Write-Host "查看提议:  $python -m collab_agent link list --db $Db"
-Write-Host "确认一条:  $python -m collab_agent link confirm --db $Db --link-id <前几位即可> --actor 王昱翔"
+Write-Host "`n== 6. 待确认的关联 =="
+& $python -m collab_agent link list --db $Db --plain
+
+Write-Host "演示库: $Db"

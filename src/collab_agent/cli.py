@@ -272,6 +272,14 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print every candidate with both scores, not only the proposals",
     )
+    link.add_argument(
+        "--plain",
+        action="store_true",
+        help=(
+            "print a table with short ids instead of JSON; the ids are ready "
+            "to paste into confirm/reject"
+        ),
+    )
 
     bind = subparsers.add_parser(
         "feishu-bind",
@@ -609,6 +617,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 "reason": link["reason"],
                             }
                         )
+                if args.plain:
+                    if not report:
+                        print("这个会议还没有关联提议。")
+                        print(
+                            "先跑：link propose --db ... --actor <姓名> --with-model"
+                        )
+                        return 0
+                    # Short ids, because the next command needs one and nobody
+                    # should be retyping a uuid mid-demo.
+                    print(f"{'ID':<12} {'状态':<10} {'关系':<13} 任务")
+                    for row in report:
+                        print(
+                            f"{row['link_id'][:10]:<12} {row['status']:<10} "
+                            f"{row['relation']:<13} {row['this_task']}"
+                        )
+                        print(f"{'':<12} {'':<10} {'':<13} ← {row['prior_task']}")
+                    print()
+                    print(
+                        "确认：link confirm --db <库> --link-id "
+                        f"{report[0]['link_id'][:10]} --actor <姓名>"
+                    )
+                    return 0
                 print(
                     json.dumps(
                         {"episode_id": episode_id, "links": report},

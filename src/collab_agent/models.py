@@ -97,6 +97,12 @@ ASSIGNMENT_RETURN_REASONS = (
     "不该由我负责，请重新指派",
 )
 
+# Offered on the web workbench only. A Feishu card picker cannot collect free
+# text in the same tap, so putting this on a card would produce a return with
+# an empty reason -- which the domain refuses. Where there is a keyboard, the
+# preset list should not be a cage.
+OTHER_RETURN_REASON = "其他（在下方填写）"
+
 
 def parse_time(value: str | datetime) -> datetime:
     if isinstance(value, datetime):

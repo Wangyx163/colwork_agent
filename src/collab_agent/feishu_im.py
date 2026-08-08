@@ -88,7 +88,11 @@ class RecordingTransport:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.updates: list[dict[str, Any]] = []
         self._seen: dict[str, str] = {}
+
+    def update_message(self, *, message_id: str, content: str) -> None:
+        self.updates.append({"message_id": message_id, "content": content})
 
     def send_message(
         self,
@@ -171,6 +175,23 @@ class LarkTransport:
         if not message_id:
             raise FeishuSendFailed("feishu send returned no message_id")
         return message_id, False
+
+    def update_message(self, *, message_id: str, content: str) -> None:
+        """Replace a card in place, so a decided one stops offering buttons."""
+
+        from lark_oapi.api.im.v1 import PatchMessageRequest, PatchMessageRequestBody
+
+        request = (
+            PatchMessageRequest.builder()
+            .message_id(message_id)
+            .request_body(PatchMessageRequestBody.builder().content(content).build())
+            .build()
+        )
+        response = self._client.im.v1.message.patch(request)
+        if not response.success():
+            raise FeishuSendFailed(
+                f"feishu card update failed code={response.code} msg={response.msg}"
+            )
 
 
 class FeishuIM:
@@ -370,6 +391,31 @@ class FeishuIM:
             "SELECT * FROM feishu_im_messages ORDER BY accepted_sequence"
         )
         return [dict(row) for row in rows]
+
+    def message_for_effect(self, effect_id: str) -> dict[str, Any] | None:
+        return self._existing_receipt(effect_id)
+
+    def update_card(self, effect_id: str, card: dict[str, Any]) -> bool:
+        """Replace the card an effect produced. Returns whether one was found.
+
+        Keyed on EffectId rather than on a message id the caller carries, so an
+        update lands on the same message the send produced even after a restart
+        -- the receipt row is the only place that mapping lives.
+        """
+
+        receipt = self._existing_receipt(effect_id)
+        if not receipt:
+            return False
+        content = canonical_json(card)
+        self.transport.update_message(
+            message_id=receipt["external_message_id"], content=content
+        )
+        with self.database.transaction() as cursor:
+            cursor.execute(
+                "UPDATE feishu_im_messages SET content = ? WHERE effect_id = ?",
+                (content, effect_id),
+            )
+        return True
 
     # ---- inbound ------------------------------------------------------
 

@@ -229,6 +229,11 @@ class FeishuApp:
                 )
         except Exception as exc:  # noqa: BLE001 - failure must be recorded, not lost
             error = repr(exc)
+        # Only now is the outcome known: the callback merely parked the click,
+        # and the domain can still refuse it. Updating the card here rather
+        # than in the callback is what keeps it from claiming an acceptance
+        # that did not happen.
+        self._settle_card(record, error)
         with self.im.database.transaction() as cursor:
             cursor.execute(
                 "UPDATE feishu_inbound_actions SET status = ?, "
@@ -242,6 +247,47 @@ class FeishuApp:
             )
         if error:
             self.log(f"[feishu] action {action_id} failed: {error}")
+
+    def _settle_card(self, record: dict[str, Any], error: str | None) -> None:
+        """Rewrite the card to what actually happened, buttons removed."""
+
+        from .feishu_cards import build_decided_card
+        from .feishu_commands import DECISIONS
+
+        effect_id = record.get("effect_id")
+        if not effect_id:
+            return
+        original = self.im.message_for_effect(str(effect_id))
+        if not original:
+            return
+        try:
+            body = json.loads(original["content"])
+            content = body["elements"][0]["text"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError):
+            content = ""
+
+        if error:
+            card = build_decided_card(
+                content,
+                decision="FAILED",
+                reason="处理失败，请在网页工作台完成这一步",
+                footer=str(error)[:80],
+            )
+        else:
+            reason = ""
+            try:
+                reason = str(json.loads(record.get("raw_value") or "{}").get("reason") or "")
+            except ValueError:
+                reason = ""
+            card = build_decided_card(
+                content,
+                decision=DECISIONS.get(str(record.get("action_name")), ""),
+                reason=reason,
+            )
+        try:
+            self.im.update_card(str(effect_id), card)
+        except Exception as exc:  # noqa: BLE001 - a stale card must not undo the decision
+            self.log(f"[feishu] card update failed (decision stands): {exc!r}")
 
     def drain_once(self, *, timeout: float = 0.5) -> bool:
         """Process one queued job. Returns False when the queue was empty."""

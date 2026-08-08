@@ -112,6 +112,77 @@ def build_effect_card(command: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+DECISION_OUTCOME_CARDS = {
+    "ACCEPT": ("green", "已接受", "你已接受这项派发。"),
+    "RETURN_FOR_REVISION": ("orange", "已退回", "你已退回这项派发，本轮其他人的回应同时失效。"),
+}
+
+
+def build_decided_card(
+    original_content: str,
+    *,
+    decision: str,
+    reason: str = "",
+    footer: str = "",
+) -> dict[str, Any]:
+    """The same card with the controls replaced by what was decided.
+
+    Buttons are removed rather than disabled: a disabled control still invites
+    a click, and a card that looks actionable after the decision is the single
+    most confusing state in this flow.
+    """
+
+    template, title, body = DECISION_OUTCOME_CARDS.get(
+        decision, ("grey", "已处理", "这项派发已经处理。")
+    )
+    elements: list[dict[str, Any]] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": original_content}},
+        {"tag": "hr"},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**{title}**：{body}"}},
+    ]
+    if reason:
+        elements.append(
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"原因：{reason}"}}
+        )
+    if footer:
+        elements.append(
+            {"tag": "note", "elements": [{"tag": "plain_text", "content": footer}]}
+        )
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "elements": elements,
+    }
+
+
+def build_pending_card(original_content: str) -> dict[str, Any]:
+    """Shown between the click and the worker finishing.
+
+    Deliberately not "已接受": at this point the click is only recorded. The
+    domain still has to check that this person is on the current dispatch and
+    that the round has not been superseded, and either can refuse.
+    """
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "处理中"},
+        },
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": original_content}},
+            {"tag": "hr"},
+            {
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "已收到你的选择，正在处理…"},
+            },
+        ],
+    }
+
+
 def build_ack_card(*, title: str, body: str, template: str = "green") -> dict[str, Any]:
     """A minimal read-only card, used to acknowledge an inbound message."""
 

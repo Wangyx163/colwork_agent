@@ -41,6 +41,17 @@ class AssignmentNotifier:
         self.service = service
         self.im = im
         self.log = log
+        # An unbound assignee is a standing condition, not an event: the poll
+        # meets it again every couple of seconds and would otherwise print the
+        # same line until somebody binds them. Logged once per person, and
+        # cleared if a binding appears so a later regression is still visible.
+        self._reported_unbound: set[str] = set()
+
+    def _display_name(self, actor_id: str) -> str:
+        row = self.service.db.one(
+            "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+        )
+        return dict(row)["display_name"] if row else actor_id
 
     def pending(self) -> list[dict[str, Any]]:
         rows = self.service.db.all(
@@ -86,6 +97,7 @@ class AssignmentNotifier:
         skipped: list[dict[str, str]] = []
         for assignment in self.pending():
             command = self._command(assignment)
+            actor_id = str(assignment["actor_id"])
             try:
                 receipt = self.im.send(
                     command, accepted_sim_time=self.service.now()
@@ -96,11 +108,15 @@ class AssignmentNotifier:
                 skipped.append(
                     {
                         "assignment_id": str(assignment["assignment_id"]),
-                        "actor_id": str(assignment["actor_id"]),
+                        "actor_id": actor_id,
+                        "display_name": self._display_name(actor_id),
                         "reason": str(error),
+                        "first_report": actor_id not in self._reported_unbound,
                     }
                 )
+                self._reported_unbound.add(actor_id)
                 continue
+            self._reported_unbound.discard(actor_id)
             if not receipt["deduplicated"]:
                 sent.append(command["effect_id"])
                 if self.log is not None:

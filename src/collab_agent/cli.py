@@ -768,9 +768,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     try:
                         outcome = notifier.notify_once()
                         for skip in outcome["skipped"]:
+                            if not skip["first_report"]:
+                                continue
+                            # Said once, and said as the blocker it is: the
+                            # task cannot leave PENDING_ASSIGNMENT until every
+                            # assignee responds, so an unbound one stalls it.
                             flushing_log(
-                                f"[feishu] no binding for {skip['actor_id']}; "
-                                "card not sent"
+                                f"[feishu] {skip['display_name']} 尚未绑定飞书，"
+                                "卡片发不出去；该任务会一直停在待响应。"
+                                f"绑定：feishu-bind --actor \"{skip['display_name']}\" "
+                                "--open-id ou_xxx"
                             )
                         delivered = service.dispatch_all(session_id=session_id)
                         if delivered:

@@ -540,6 +540,61 @@ def _system_prompt() -> str:
 }"""
 
 
+def summarize_token_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """Total, quartiles and outliers over per-call token totals.
+
+    Reported as order statistics rather than a fitted distribution: at five or
+    ten calls a density curve draws a shape the data cannot support, and the
+    one expensive call -- the thing worth seeing -- is exactly what smoothing
+    would erase.
+    """
+
+    totals = sorted(
+        int(call["total_tokens"])
+        for call in calls
+        if isinstance(call.get("total_tokens"), int)
+    )
+    if not totals:
+        return {
+            "calls": 0,
+            "total_tokens": 0,
+            "median": None,
+            "p25": None,
+            "p75": None,
+            "iqr": None,
+            "outliers": [],
+            "note": "这次运行没有产生外部模型调用",
+        }
+
+    def quantile(fraction: float) -> float:
+        if len(totals) == 1:
+            return float(totals[0])
+        position = fraction * (len(totals) - 1)
+        low = int(position)
+        high = min(low + 1, len(totals) - 1)
+        return totals[low] + (totals[high] - totals[low]) * (position - low)
+
+    p25, median, p75 = quantile(0.25), quantile(0.5), quantile(0.75)
+    iqr = p75 - p25
+    # Tukey's fence. With few calls it flags rather than proves; the panel
+    # shows every point anyway, so a flag only draws the eye.
+    fence = 1.5 * iqr
+    outliers = [
+        value for value in totals if value < p25 - fence or value > p75 + fence
+    ]
+    return {
+        "calls": len(totals),
+        "total_tokens": sum(totals),
+        "min": totals[0],
+        "max": totals[-1],
+        "median": round(median, 1),
+        "p25": round(p25, 1),
+        "p75": round(p75, 1),
+        "iqr": round(iqr, 1),
+        "outliers": outliers,
+    }
+
+
 def _tools_system_prompt() -> str:
     """v1.4's rules, plus the obligation to verify a citation before writing it.
 
@@ -931,6 +986,43 @@ class BailianExtractor:
             totals[key] = sum(numeric) if numeric else None
         return totals
 
+    @staticmethod
+    def _per_call_usage(
+        response_payloads: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """One row per model call, in the order the calls were made.
+
+        A total alone cannot answer the question anyone actually asks about
+        token spend -- which call was expensive, and is it typical. Summing on
+        the way out discards exactly the distribution that question needs, and
+        five chunks summed to 16,059 tells you nothing about whether one of
+        them cost triple the rest.
+        """
+
+        calls: list[dict[str, Any]] = []
+        for index, payload in enumerate(response_payloads, start=1):
+            usage = payload.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            total = usage.get("total_tokens")
+            if not isinstance(total, int):
+                continue
+            calls.append(
+                {
+                    "call_index": index,
+                    "prompt_tokens": usage.get("prompt_tokens"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                    "total_tokens": total,
+                    "model": payload.get("model"),
+                    # Retries cost tokens and are part of the spend, so they
+                    # are reported rather than folded into the call they retried.
+                    "request_attempts": int(
+                        payload.get("_adapter_request_attempts", 1)
+                    ),
+                }
+            )
+        return calls
+
     def _transcript_chunks(self, transcript: str) -> list[str]:
         lines = [line.strip() for line in transcript.splitlines() if line.strip()]
         if not lines:
@@ -1297,6 +1389,12 @@ class BailianExtractor:
                 else None
             ),
             "usage": self._usage(response_payloads),
+            # Kept alongside the total, not instead of it: the total answers
+            # "what did this cost", the calls answer "where did it go".
+            "token_calls": self._per_call_usage(response_payloads),
+            "token_summary": summarize_token_calls(
+                self._per_call_usage(response_payloads)
+            ),
             "model_call_count": len(response_payloads),
             "transport_attempt_count": sum(
                 int(payload.get("_adapter_request_attempts", 1))

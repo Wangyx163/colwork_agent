@@ -125,8 +125,10 @@
         "status": "NOT_DONE"
       },
       "FEISHU_MINUTES_INTAKE": {
-        "status": "NOT_DONE",
-        "note": "妙记 transcript → Episode bootstrap 尚未做，逐字稿仍走文件"
+        "status": "DONE_UNVERIFIED",
+        "requires_extra": "feishu",
+        "note": "妙记 transcript + 群成员 → 逐字稿与名单提议。解析器与名单调和有离线测试；但从未对真实租户跑过——需要「查看下载妙记」和「获取群成员信息」权限。刻意不自动建 Episode：群成员 ≠ 参会者，名单是授权边界，由人确认。",
+        "verified_by": "tests/test_feishu_minutes.py"
       },
       "FEISHU_TASK_SYNC": {
         "status": "WILL_NOT_DO",

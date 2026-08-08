@@ -14,11 +14,17 @@ MANIFEST = ROOT / "capabilities.json"
 VALID_STATUSES = {
     "DONE",
     "DONE_WITH_EXTRA",
+    # Built and covered by offline tests, but never run against the live
+    # service it talks to. Kept distinct from DONE because "the tests pass" and
+    # "it works against the real thing" are different claims, and collapsing
+    # them is how a manifest starts lying.
+    "DONE_UNVERIFIED",
     "NOT_DONE",
     "NOT_SUPPORTED",
     "WILL_NOT_DO",
     "MEASURED_REJECTED",
 }
+PROVEN_STATUSES = {"DONE", "DONE_WITH_EXTRA", "DONE_UNVERIFIED"}
 
 
 def _load() -> dict:
@@ -72,10 +78,21 @@ class ManifestShapeTests(unittest.TestCase):
 
     def test_a_done_capability_cites_its_proof(self) -> None:
         for group, name, entry in _entries():
-            if entry["status"] in {"DONE", "DONE_WITH_EXTRA"}:
+            if entry["status"] in PROVEN_STATUSES:
                 self.assertTrue(
                     entry.get("verified_by"),
                     f"{group}.{name} claims DONE without naming a test",
+                )
+
+    def test_an_unverified_capability_says_what_is_unverified(self) -> None:
+        """DONE_UNVERIFIED must carry the caveat, or it reads as DONE."""
+
+        for group, name, entry in _entries():
+            if entry["status"] == "DONE_UNVERIFIED":
+                self.assertIn(
+                    "从未",
+                    str(entry.get("note") or ""),
+                    f"{group}.{name} is unverified but its note does not say so",
                 )
 
 
@@ -139,11 +156,9 @@ class ManifestAgreesWithCodeTests(unittest.TestCase):
         self.assertIn("FEISHU_LONG_CONNECTION", done)
         self.assertTrue((ROOT / "src/collab_agent/feishu_app.py").exists())
         self.assertEqual(
-            surfaces["FEISHU_MINUTES_INTAKE"]["status"],
-            "NOT_DONE",
-            "no minutes intake module exists yet",
+            surfaces["FEISHU_MINUTES_INTAKE"]["status"], "DONE_UNVERIFIED"
         )
-        self.assertFalse((ROOT / "src/collab_agent/feishu_minutes.py").exists())
+        self.assertTrue((ROOT / "src/collab_agent/feishu_minutes.py").exists())
 
     def test_the_semantic_threshold_matches_the_code(self) -> None:
         from collab_agent.embeddings import SEMANTIC_LINK_THRESHOLD

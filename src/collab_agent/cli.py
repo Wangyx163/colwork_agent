@@ -227,6 +227,29 @@ def _parser() -> argparse.ArgumentParser:
         "--case-id", default="", help="required when the file holds several cases"
     )
 
+    intake = subparsers.add_parser(
+        "feishu-intake",
+        help=(
+            "pull a meeting transcript and roster proposal out of Feishu minutes"
+        ),
+    )
+    intake.add_argument(
+        "--minute-token",
+        required=True,
+        help="妙记链接末段的 token",
+    )
+    intake.add_argument(
+        "--chat-id",
+        default="",
+        help="群 ID；给了才能提议参会名单并带出 open_id",
+    )
+    intake.add_argument(
+        "--output",
+        default="",
+        help="逐字稿写到哪个文件；不给则只打印统计",
+    )
+    intake.add_argument("--file-format", default="srt", choices=("srt", "txt"))
+
     link = subparsers.add_parser(
         "link",
         help="propose, list and decide links to action items from earlier meetings",
@@ -516,6 +539,60 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         finally:
             database.close()
+    if args.command == "feishu-intake":
+        from .feishu_config import load_feishu_config
+        from .feishu_minutes import LarkMinutesTransport, MinutesError, intake
+
+        try:
+            result = intake(
+                LarkMinutesTransport(load_feishu_config()),
+                minute_token=args.minute_token,
+                chat_id=args.chat_id,
+                file_format=args.file_format,
+            )
+        except MinutesError as error:
+            print(str(error))
+            return 1
+
+        if args.output:
+            destination = Path(args.output)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(result["transcript"], encoding="utf-8")
+
+        roster = result["roster"]
+        matched = roster["spoke_and_in_chat"]
+        print(f"逐字稿 {result['line_count']} 行，{len(result['speakers'])} 位发言人")
+        if args.output:
+            print(f"已写入 {Path(args.output).resolve()}")
+        print()
+        if matched:
+            print("发言且在群里（可直接作为参会人）：")
+            for row in matched:
+                print(f"   {row['name']:<12} {row['open_id']}")
+        if roster["spoke_but_not_in_chat"]:
+            print("发言但不在群里（可能是转写变体或外部人员，需你判断）：")
+            for name in roster["spoke_but_not_in_chat"]:
+                print(f"   {name}")
+        if roster["in_chat_but_silent"]:
+            print("在群里但全程未发言（可能到场未说话，也可能根本没参会）：")
+            for name in roster["in_chat_but_silent"]:
+                print(f"   {name}")
+        if matched:
+            # Printed rather than executed: the roster is the authorisation
+            # boundary, and "who is in the group chat" is not the same question
+            # as "who attended". Removing the typing is worth doing; removing
+            # the decision is not.
+            flags = " ".join(f'--participant "{row["name"]}"' for row in matched)
+            print()
+            print("确认名单后，载入会议：")
+            print(f"   ... {flags} --postgres")
+            print("绑定飞书身份（每人一条）：")
+            for row in matched:
+                print(
+                    f'   collab-agent feishu-bind --postgres --actor "{row["name"]}" '
+                    f'--open-id {row["open_id"]}'
+                )
+        return 0
     if args.command == "gold-to-extraction":
         from .demo_fixtures import gold_to_extraction
 

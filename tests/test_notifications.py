@@ -113,73 +113,31 @@ class NotificationTests(unittest.TestCase):
             message_id=message_id,
         )
 
-    def test_dispatch_notifies_every_assignee_with_both_decisions(self) -> None:
-        self.dispatch()
-        entries = self.notifications(NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED)
-        self.assertEqual(len(entries), 1)
-        payload = entries[0]["payload"]
-        self.assertCountEqual(
-            payload["recipient_actor_ids"],
-            [self.actors["同事甲"], self.actors["同事乙"]],
-        )
-        notification = payload["notification"]
-        self.assertEqual(notification["notification_contract_version"], "notification.v1")
-        self.assertEqual(
-            notification["action_item_id"], self.action["action_item_id"]
-        )
-        decisions = {item["name"]: item for item in notification["decisions"]}
-        self.assertEqual(
-            set(decisions), {"ASSIGNMENT_ACCEPT", "ASSIGNMENT_RETURN"}
-        )
-        # Returning terminates the round for everyone, so it cannot be a bare
-        # button click.
-        self.assertFalse(decisions["ASSIGNMENT_ACCEPT"]["requires_reason"])
-        self.assertTrue(decisions["ASSIGNMENT_RETURN"]["requires_reason"])
-
-    def test_a_text_only_transport_still_has_something_to_send(self) -> None:
-        """MockIM and any other text adapter read `content`; the structured
-        notification is additive so no existing transport breaks."""
+    def test_dispatch_does_not_enqueue_an_outbox_effect(self) -> None:
+        """Feishu pushes assignment cards through AssignmentNotifier, which
+        projects pending assignments directly. Enqueueing an Outbox effect here
+        too would send one person two cards for one dispatch, because the two
+        paths derive different EffectIds for the same business event."""
 
         self.dispatch()
-        payload = self.notifications(NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED)[0]["payload"]
-        self.assertIn("整理会议纪要", payload["content"])
-        self.assertIn("请在周五前完成", payload["content"])
+        self.assertEqual(self.notifications(NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED), [])
 
-    def test_redispatching_the_same_version_does_not_notify_twice(self) -> None:
-        self.dispatch()
-        self.dispatch(message_id="dispatch-1")
-        self.assertEqual(len(self.notifications(NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED)), 1)
+    def test_notifications_do_not_consume_the_nudge_budget(self) -> None:
+        """Event-driven notifications must always arrive; only nudges are
+        subject to the daily touch budget and the cooldown."""
 
-    def test_a_new_definition_version_notifies_again(self) -> None:
-        self.dispatch()
-        self.service.respond_to_assignment(
+        self.accept_all_and_track()
+        self.service.request_assistance(
             self.action["action_item_id"],
             actor_id=self.actors["同事甲"],
-            decision="RETURN_FOR_REVISION",
-            response_message="范围不清楚",
-            message_id="return-1",
+            target_actor_id=self.actors["同事乙"],
+            category="EXPERTISE",
+            summary="需要帮忙核对",
+            message_id="help-budget",
         )
-        deadline = (parse_time(self.service.now()) + timedelta(days=3)).isoformat()
-        self.service.revise_action_proposal(
-            self.action["action_item_id"],
-            actor_id=self.coordinator,
-            title=self.action["title"],
-            deliverable="会议纪要（含决议清单）",
-            acceptance_criteria="结论清晰",
-            priority="P1",
-            team_required_by_sim_time=deadline,
-            message_id="revise-after-return",
-        )
-        self.dispatch(message_id="dispatch-2")
-        entries = self.notifications(NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED)
-        self.assertEqual(len(entries), 2)
-        versions = {
-            field["value"]
-            for entry in entries
-            for field in entry["payload"]["notification"]["fields"]
-            if field["label"] == "任务版本"
-        }
-        self.assertEqual(versions, {"v1", "v2"})
+        self.assertTrue(self.notifications())
+        interventions = self.db.all("SELECT COUNT(*) AS count FROM interventions")
+        self.assertEqual(int(interventions[0]["count"]), 0)
 
     def test_assistance_reaches_the_target_with_an_acknowledge_action(self) -> None:
         """A help request used to live only on a page the target might never
@@ -245,16 +203,6 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(notification["decisions"], [])
         self.assertEqual(notification["deep_link_path"], "/tasks")
         self.assertIn("缺少负责人和时间", notification["summary"])
-
-    def test_notifications_do_not_consume_the_nudge_budget(self) -> None:
-        """A dispatch someone must respond to is event-driven and always has to
-        arrive; only nudges are subject to the daily touch budget."""
-
-        self.dispatch()
-        entries = self.notifications()
-        self.assertTrue(entries)
-        interventions = self.db.all("SELECT COUNT(*) AS count FROM interventions")
-        self.assertEqual(int(interventions[0]["count"]), 0)
 
     def accept_all_and_track(self) -> None:
         self.dispatch()

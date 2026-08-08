@@ -229,6 +229,40 @@ def load_alimeeting4mug(
     return meetings
 
 
+def _best_matching_sentences(
+    normalized_sentences: list[str], items: Iterable[dict[str, Any]]
+) -> set[int]:
+    """Locate the one sentence each quote cites.
+
+    One item cites one sentence, so only its best match is credited. Crediting
+    every substring hit instead inflated a single item into ten-plus sentences,
+    because a transcript is full of short backchannels ("对", "是这个") that any
+    longer quote contains -- which destroyed precision across the whole corpus.
+    """
+
+    matched: set[int] = set()
+    for item in items:
+        quote = normalize(item.get("source_quote") or "")
+        if not quote:
+            continue
+        best_index: int | None = None
+        best_length = 0
+        for index, sentence in enumerate(normalized_sentences):
+            if not sentence:
+                continue
+            if sentence == quote:
+                best_index, best_length = index, len(sentence)
+                break
+            if sentence in quote or quote in sentence:
+                overlap = min(len(sentence), len(quote))
+                if overlap > best_length:
+                    best_index, best_length = index, overlap
+        # A two-character coincidence is not a citation.
+        if best_index is not None and best_length >= 4:
+            matched.add(best_index)
+    return matched
+
+
 def load_project_cases(path: str | Path) -> list[LabelledMeeting]:
     """Read this project's own annotated meetings.
 
@@ -243,15 +277,14 @@ def load_project_cases(path: str | Path) -> list[LabelledMeeting]:
         transcript = str(case.get("transcript") or "")
         sentences = split_sentences(transcript)
         normalized = [normalize(sentence) for sentence in sentences]
-        positives: set[int] = set()
         expected = case.get("expected") or []
-        for item in expected:
-            quote = normalize(item.get("source_quote") or "")
-            if not quote:
-                continue
-            for index, sentence in enumerate(normalized):
-                if sentence and (sentence in quote or quote in sentence):
-                    positives.add(index)
+        # Gold labels have to be located the same way predictions are, or the
+        # two sides are not comparable. Sharing the matcher also means the
+        # one-item-one-sentence rule applies here: a transcript is full of short
+        # backchannels that any longer quote contains, and crediting every
+        # substring hit would inflate one annotation into several gold
+        # sentences.
+        positives = _best_matching_sentences(normalized, expected)
         meetings.append(
             LabelledMeeting(
                 meeting_id=str(case.get("case_id") or f"case_{len(meetings) + 1}"),
@@ -302,32 +335,9 @@ def predicted_sentence_indices(
     want, since an unlocatable quote is a fabricated citation.
     """
 
-    normalized = [normalize(sentence) for sentence in meeting.sentences]
-    predicted: set[int] = set()
-    for item in items:
-        quote = normalize(item.get("source_quote") or "")
-        if not quote:
-            continue
-        # One extracted item cites one sentence, so only its best match may be
-        # credited. Adding every substring hit instead inflated a single item
-        # into ten-plus predicted sentences, because a transcript is full of
-        # short backchannels ("对", "是这个") that any longer quote contains.
-        best_index: int | None = None
-        best_length = 0
-        for index, sentence in enumerate(normalized):
-            if not sentence:
-                continue
-            if sentence == quote:
-                best_index, best_length = index, len(sentence)
-                break
-            if sentence in quote or quote in sentence:
-                overlap = min(len(sentence), len(quote))
-                if overlap > best_length:
-                    best_index, best_length = index, overlap
-        # A two-character coincidence is not a citation.
-        if best_index is not None and best_length >= 4:
-            predicted.add(best_index)
-    return predicted
+    return _best_matching_sentences(
+        [normalize(sentence) for sentence in meeting.sentences], items
+    )
 
 
 def score_sentences(
@@ -383,7 +393,24 @@ def score_items(
     normalized_transcript = normalize(meeting.transcript)
     field_hits = {"owner_name": 0, "deadline_iso": 0, "deliverable": 0}
     field_total = {"owner_name": 0, "deadline_iso": 0, "deliverable": 0}
+    # Collaborators are scored as a set: a task named two people is not "wrong
+    # owner", it is a task with an owner and a collaborator, and the extractor
+    # has always been able to say so. Omitting this from the gold schema forced
+    # annotators to write null for every jointly-assigned task, which would
+    # have scored a correct extraction as an error.
+    collaborator_hits = 0
+    collaborator_total = 0
     for want, got in matched_pairs:
+        wanted_collaborators = {
+            normalize(name) for name in want.get("collaborator_names") or [] if name
+        }
+        if wanted_collaborators:
+            collaborator_total += 1
+            got_collaborators = {
+                normalize(name) for name in got.get("collaborator_names") or [] if name
+            }
+            if wanted_collaborators == got_collaborators:
+                collaborator_hits += 1
         for name in field_hits:
             if want.get(name) in (None, ""):
                 continue
@@ -398,10 +425,17 @@ def score_items(
     return {
         "detection": detection,
         "field_accuracy": {
-            name: round(field_hits[name] / field_total[name], 4)
-            if field_total[name]
-            else None
-            for name in field_hits
+            **{
+                name: round(field_hits[name] / field_total[name], 4)
+                if field_total[name]
+                else None
+                for name in field_hits
+            },
+            "collaborator_names": (
+                round(collaborator_hits / collaborator_total, 4)
+                if collaborator_total
+                else None
+            ),
         },
         "predicted_items": len(items),
         # A quote that cannot be found in the transcript is a fabricated
@@ -515,6 +549,47 @@ def evaluate_extractor(
     }
 
 
+def frozen_state() -> dict[str, Any]:
+    """Record what produced these numbers, so «blind» is auditable.
+
+    A held-out set only means something if the extractor was frozen before the
+    set existed. Without this, that ordering is a claim the reader has to take
+    on trust; with it, the prompt version and commit in the report can be
+    checked against when the annotation file was created.
+    """
+
+    import subprocess
+    from datetime import UTC, datetime
+
+    from .extraction import (
+        ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
+        ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION,
+    )
+
+    def git(*args: str) -> str | None:
+        try:
+            return subprocess.run(
+                ["git", *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+        except Exception:
+            return None
+
+    dirty = git("status", "--porcelain")
+    return {
+        "prompt_version": ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
+        "tools_prompt_version": ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION,
+        "commit": git("rev-parse", "HEAD"),
+        # A dirty tree means the committed prompt is not what actually ran, so
+        # the reader cannot reconstruct this number.
+        "working_tree_clean": (dirty == "") if dirty is not None else None,
+        "run_at": datetime.now(UTC).isoformat(),
+    }
+
+
 def compare_extractors(
     meetings: list[LabelledMeeting],
     extractors: dict[str, Callable[[LabelledMeeting], list[dict[str, Any]]]],
@@ -539,6 +614,7 @@ def compare_extractors(
     )
     return {
         "schema_version": "extraction-evaluation.v1",
+        "frozen_state": frozen_state(),
         "corpus": corpus,
         "published_reference": PUBLISHED_SENTENCE_F1_BASELINE,
         "interpretation_ceiling": (

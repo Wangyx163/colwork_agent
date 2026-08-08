@@ -1,0 +1,31 @@
+{
+  "schema_version": "annotation.v1",
+  "description": "复制这个文件重命名后填写；规范见 fixtures/ANNOTATION_GUIDE.md。填完运行 python -m collab_agent check-annotation --cases <你的文件> 自检。",
+  "cases": [
+    {
+      "case_id": "改成你的会议标识，例如 acisc-20260309",
+      "meeting_date": "2026-03-09",
+      "participants": [
+        "参会者甲",
+        "参会者乙"
+      ],
+      "blind": false,
+      "_blind说明": "true = 这份从未用于调 Prompt 或规则。最终报数只用 blind=true 的会议；至少要有一份。填完后删掉这行。",
+      "transcript": "参会者甲(00:00:00): 把逐字稿全文粘到这里，保留 说话人(HH:MM:SS): 内容 的格式。\n参会者乙(00:01:12): 那我这边准备七八个采访问题发给甲。\n",
+      "expected": [
+        {
+          "title": "准备街采候选问题",
+          "item_type": "TASK",
+          "deliverable": "7—8 个候选采访问题",
+          "owner_name": "参会者乙",
+          "collaborator_names": [],
+          "deadline_text": null,
+          "deadline_iso": null,
+          "source_timestamp": "00:01:12",
+          "source_quote": "那我这边准备七八个采访问题发给甲。",
+          "annotator_note": "犹豫的原因写这里，没有就留空字符串"
+        }
+      ]
+    }
+  ]
+}

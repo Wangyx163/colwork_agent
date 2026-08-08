@@ -2267,41 +2267,13 @@ class CoordinationService:
                 },
                 correlation_id=correlation_id,
             )
-            # Accepting or returning a dispatch needs no reading of a
-            # deliverable, so both decisions can be made from the notification
-            # itself. Returning terminates the whole round, so it must carry a
-            # reason.
-            self._notify(
-                cursor,
-                effect_type=NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED,
-                recipient_actor_ids=[actor["actor_id"] for actor in assignments],
-                action_item_id=action_item_id,
-                title=f'待你回应的任务派发：{action["title"]}',
-                summary=assignment_message or "负责人未补充派发留言",
-                fields=[
-                    {
-                        "label": "团队需要时间",
-                        "value": str(action["team_required_by_sim_time"] or "未设定"),
-                    },
-                    {"label": "任务版本", "value": f"v{definition_version}"},
-                ],
-                decisions=[
-                    {
-                        "name": "ASSIGNMENT_ACCEPT",
-                        "label": "接受",
-                        "requires_reason": False,
-                    },
-                    {
-                        "name": "ASSIGNMENT_RETURN",
-                        "label": "退回重改",
-                        "requires_reason": True,
-                        "reason_hint": "说明需要负责人改什么，本轮全部成员的回应都会失效",
-                    },
-                ],
-                correlation_id=correlation_id,
-                sim_time=sim_time,
-                trigger_key=f"{action_item_id}:v{definition_version}",
-            )
+            # No assignment notification is enqueued here. Feishu already
+            # pushes assignment cards through AssignmentNotifier, which
+            # projects pending assignments directly; adding an Outbox effect
+            # too would send the same person two cards for one dispatch,
+            # because the two paths derive different EffectIds for the same
+            # business event. Consolidating onto one of them is a decision
+            # for whoever owns the Feishu surface.
             result = {
                 "action_item_id": action_item_id,
                 "status": ActionItemStatus.PENDING_ASSIGNMENT,

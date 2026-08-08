@@ -328,3 +328,25 @@ class ProductMetricTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrozenStateTests(unittest.TestCase):
+    """A held-out number only means something if the extractor was frozen
+    before the held-out set existed. Recording what ran turns that ordering
+    from a claim into something the reader can check."""
+
+    def test_every_report_records_what_produced_it(self) -> None:
+        from collab_agent.extraction import ACTION_ITEM_EXTRACTION_PROMPT_VERSION
+
+        report = compare_extractors(
+            [meeting(["小王明天提交清单。"], {0})],
+            {"keyword_floor": keyword_extractor},
+        )
+        state = report["frozen_state"]
+        self.assertEqual(
+            state["prompt_version"], ACTION_ITEM_EXTRACTION_PROMPT_VERSION
+        )
+        self.assertIn("commit", state)
+        self.assertIn("run_at", state)
+        # A dirty tree means the committed prompt is not what actually ran.
+        self.assertIn("working_tree_clean", state)

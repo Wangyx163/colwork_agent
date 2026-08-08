@@ -83,6 +83,12 @@ class FeishuApp:
                         "sender_open_id": sender_open_id,
                         "message_id": message_id,
                         "text": text,
+                        # Carried so a person can discover it: chat_id is
+                        # required to pull a roster from a group, and there is
+                        # no other place to read it without an API call that
+                        # itself needs the id.
+                        "chat_id": getattr(message, "chat_id", "") or "",
+                        "chat_type": getattr(message, "chat_type", "") or "",
                     },
                 )
             )
@@ -176,18 +182,26 @@ class FeishuApp:
             self.log(f"[feishu] unbound sender {sender_open_id} asked for binding")
             return
 
+        # In a group, the chat_id is echoed back: pulling a roster out of a
+        # group needs it, and there is nowhere else to read it without an API
+        # call that already requires the id. In a direct message there is no
+        # roster to pull, so the line would only be noise.
+        body = (
+            "你已绑定到本次会议。派发和待办会自动推送到这里，无需回复。\n"
+            "修订任务、提交成果和验收请在网页工作台完成。"
+        )
+        chat_id = str(job.get("chat_id") or "")
+        if chat_id and str(job.get("chat_type") or "") == "group":
+            body += f"\n\n本群 chat_id：`{chat_id}`\n（拉取参会名单时要用）"
         self._send_raw_card(
             sender_open_id,
-            build_ack_card(
-                title="已绑定",
-                body=(
-                    "你已绑定到本次会议。派发和待办会自动推送到这里，无需回复。\n"
-                    "修订任务、提交成果和验收请在网页工作台完成。"
-                ),
-            ),
+            build_ack_card(title="已绑定", body=body),
             uuid_seed=f"bound:{job['message_id']}",
         )
-        self.log(f"[feishu] acked bound sender {actor_id}")
+        self.log(
+            f"[feishu] acked bound sender {actor_id}"
+            + (f" chat_id={chat_id}" if chat_id else "")
+        )
 
     def _send_raw_card(
         self, open_id: str, card: dict[str, Any], *, uuid_seed: str

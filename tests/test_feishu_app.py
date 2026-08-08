@@ -13,7 +13,12 @@ from collab_agent.store import Database
 
 
 def _message_event(
-    *, open_id: str = "ou_aaa", message_id: str = "om_1", text: str = "你好"
+    *,
+    open_id: str = "ou_aaa",
+    message_id: str = "om_1",
+    text: str = "你好",
+    chat_id: str = "",
+    chat_type: str = "p2p",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         event=SimpleNamespace(
@@ -22,6 +27,8 @@ def _message_event(
                 message_id=message_id,
                 content=json.dumps({"text": text}),
                 message_type="text",
+                chat_id=chat_id,
+                chat_type=chat_type,
             ),
         )
     )
@@ -175,6 +182,32 @@ class FeishuMinimalLoopTests(unittest.TestCase):
         self.assertEqual(
             len(uuids), 1, "the same source message must reuse one idempotency key"
         )
+
+    def test_a_group_reply_hands_back_the_chat_id(self) -> None:
+        """Pulling a roster needs it, and it is readable nowhere else."""
+
+        self.app.handle_message_receive(
+            _message_event(chat_id="oc_group_1", chat_type="group")
+        )
+        self._drain()
+
+        rendered = json.dumps(
+            json.loads(self.transport.calls[0]["content"]), ensure_ascii=False
+        )
+        self.assertIn("oc_group_1", rendered)
+
+    def test_a_direct_message_reply_omits_it(self) -> None:
+        """There is no roster behind a one-to-one chat, so it would be noise."""
+
+        self.app.handle_message_receive(
+            _message_event(chat_id="oc_p2p_1", chat_type="p2p")
+        )
+        self._drain()
+
+        rendered = json.dumps(
+            json.loads(self.transport.calls[0]["content"]), ensure_ascii=False
+        )
+        self.assertNotIn("oc_p2p_1", rendered)
 
     def test_a_bad_event_never_escapes_the_callback(self) -> None:
         broken = SimpleNamespace(event=None)

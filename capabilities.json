@@ -1,0 +1,154 @@
+{
+  "schema_version": "capabilities.v1",
+  "description": "机器可读的能力清单。判断'某项现在做完没有'以本文件为准，不以 colwrok_SDD/ 正文叙述为准——那些文档含历史 TODO。每条 verified_by 指向证明它的测试，tests/test_capabilities.py 会逐条核对本文件与代码是否一致。",
+  "capabilities": {
+    "attachment_extraction": {
+      "PDF": {
+        "status": "DONE",
+        "requires_extra": null,
+        "note": "pypdf 是基础依赖",
+        "verified_by": "tests/test_upload_limits.py"
+      },
+      "TXT": {
+        "status": "DONE",
+        "requires_extra": null,
+        "verified_by": "tests/test_task_result_flow.py"
+      },
+      "DOCX": {
+        "status": "DONE_WITH_EXTRA",
+        "requires_extra": "office",
+        "note": "经 markitdown 抽取。未装该 extra 时提交不会失败，按 UNSUPPORTED 降级。SDD 12 说 DONE、SDD 18 说 P1，两者都不完整——正确说法是装了 extra 才有。",
+        "verified_by": "tests/test_office_attachments.py"
+      },
+      "XLSX": {
+        "status": "DONE_WITH_EXTRA",
+        "requires_extra": "office",
+        "verified_by": "tests/test_office_attachments.py"
+      },
+      "PPTX": {
+        "status": "DONE_WITH_EXTRA",
+        "requires_extra": "office",
+        "verified_by": "tests/test_office_attachments.py"
+      },
+      "WEB_LINK": {
+        "status": "NOT_SUPPORTED",
+        "requires_extra": null,
+        "note": "链接只记录元数据，不抓取正文"
+      }
+    },
+    "storage_backends": {
+      "SQLITE": {
+        "status": "DONE",
+        "requires_extra": null,
+        "note": "开发默认",
+        "verified_by": "tests/"
+      },
+      "POSTGRESQL": {
+        "status": "DONE",
+        "requires_extra": "postgres",
+        "note": "生产目标；CI 两个后端各跑一遍全量，证明共享同一套领域语义",
+        "verified_by": "tests/test_postgres_adapter.py"
+      },
+      "PGVECTOR": {
+        "status": "NOT_SUPPORTED",
+        "requires_extra": null,
+        "note": "刻意不做。只有 PostgreSQL 有，会破坏双后端一致性；向量以 JSON 存储、Python 算余弦"
+      }
+    },
+    "model_use": {
+      "ACTION_ITEM_EXTRACTION": {
+        "status": "DONE",
+        "prompt_version": "meeting-action-items.v1.4",
+        "note": "候选抽取，产出过 schema 与出处校验",
+        "verified_by": "tests/test_extraction.py"
+      },
+      "EXTRACTION_TOOL_CALLING": {
+        "status": "MEASURED_REJECTED",
+        "prompt_version": "meeting-action-items.tools.v2.0",
+        "note": "对照组，实测更差已决定不采用：held-out 8 场抽取量 49→94、F1 0.1538→0.0556、引文可定位率不变 1.0。原因是 align_source_evidence 已在做同一个搜索。代码保留在 --tools 后默认关闭。",
+        "verified_by": "tests/test_extraction_tool_loop.py"
+      },
+      "FINAL_ORGANIZATION": {
+        "status": "DONE",
+        "note": "受约束的终稿语义整理",
+        "verified_by": "tests/test_result_processing.py"
+      },
+      "CROSS_MEETING_LINKAGE": {
+        "status": "DONE",
+        "note": "跨会议关联提议；PROPOSED 不改变任何任务状态，只有人能确认",
+        "verified_by": "tests/test_linkage.py"
+      },
+      "SEMANTIC_SIMILARITY": {
+        "status": "DONE",
+        "requires_extra": null,
+        "note": "text-embedding-v3，按内容哈希缓存。阈值 0.65 来自实测：真延续 0.695–0.776，无关 0.373–0.565",
+        "verified_by": "tests/test_embeddings.py"
+      },
+      "TOKEN_COUNTING": {
+        "status": "DONE_WITH_EXTRA",
+        "requires_extra": "tokenizer",
+        "note": "未装时用 CJK 保守字符估算",
+        "verified_by": "tests/test_token_estimation.py"
+      }
+    },
+    "interaction_surfaces": {
+      "WEB_WORKBENCH": {
+        "status": "DONE",
+        "note": "/tasks /manage /diagnostics",
+        "verified_by": "tests/test_auth.py"
+      },
+      "FEISHU_LONG_CONNECTION": {
+        "status": "DONE",
+        "requires_extra": "feishu",
+        "note": "免公网 IP、免内网穿透；真实租户验证过",
+        "verified_by": "tests/test_feishu_app.py"
+      },
+      "FEISHU_IDENTITY_BINDING": {
+        "status": "DONE",
+        "requires_extra": "feishu",
+        "note": "actor_id ↔ open_id 显式绑定，不把 open_id 当 actor_id",
+        "verified_by": "tests/test_feishu_im.py"
+      },
+      "FEISHU_ASSIGNMENT_RESPONSE": {
+        "status": "DONE",
+        "requires_extra": "feishu",
+        "note": "派发卡片 + 接受/退回，三层幂等",
+        "verified_by": "tests/test_feishu_commands.py"
+      },
+      "FEISHU_ASSISTANCE_AND_SIGNALS": {
+        "status": "NOT_DONE",
+        "note": "求助与快捷状态尚未搬到飞书"
+      },
+      "FEISHU_VOTE_CARD": {
+        "status": "NOT_DONE"
+      },
+      "FEISHU_MINUTES_INTAKE": {
+        "status": "NOT_DONE",
+        "note": "妙记 transcript → Episode bootstrap 尚未做，逐字稿仍走文件"
+      },
+      "FEISHU_TASK_SYNC": {
+        "status": "WILL_NOT_DO",
+        "note": "刻意不做。同步到飞书 Task 会产生第二个工作流数据库，破坏 single source of truth"
+      }
+    },
+    "runtime": {
+      "OUTBOX_EFFECT_ID_IDEMPOTENCY": {
+        "status": "DONE",
+        "verified_by": "tests/test_p0.py"
+      },
+      "CRASH_RECOVERY": {
+        "status": "DONE",
+        "verified_by": "tests/test_agent_worker.py"
+      },
+      "VIRTUAL_CLOCK": {
+        "status": "DONE",
+        "note": "评测用；飞书运行时用真实时钟",
+        "verified_by": "tests/test_p0.py"
+      },
+      "REAL_SCHEDULER": {
+        "status": "NOT_DONE",
+        "note": "真实定时催办未做"
+      }
+    }
+  }
+}

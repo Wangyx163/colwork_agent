@@ -214,6 +214,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     annotation.add_argument("--cases", required=True)
 
+    gold_extract = subparsers.add_parser(
+        "gold-to-extraction",
+        help=(
+            "derive an extraction file from a validated annotation, so a demo "
+            "loads the same meeting every time without calling a model"
+        ),
+    )
+    gold_extract.add_argument("--gold", required=True)
+    gold_extract.add_argument("--output", required=True)
+    gold_extract.add_argument(
+        "--case-id", default="", help="required when the file holds several cases"
+    )
+
     link = subparsers.add_parser(
         "link",
         help="propose, list and decide links to action items from earlier meetings",
@@ -482,6 +495,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         finally:
             database.close()
+    if args.command == "gold-to-extraction":
+        from .demo_fixtures import gold_to_extraction
+
+        try:
+            result = gold_to_extraction(
+                args.gold, args.output, case_id=args.case_id or None
+            )
+        except ValueError as error:
+            print(str(error))
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "link":
         from .feishu_app import real_now
         from .linkage import (

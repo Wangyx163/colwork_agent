@@ -242,7 +242,20 @@ python -m collab_agent link confirm --postgres --link-id lnk_xxx --actor "王昱
 
 **模型不能做的**：提议一个不在候选池里的 id。每个返回的 id 都对池校验，编造的直接丢弃——跟 `source_quote` 同一套接地纪律。`PROPOSED` 不改变任何任务状态，只有人能把它变成 `CONFIRMED`；`UNIQUE(action_item_id, prior_action_item_id)` 保证重跑提议器不会复活一条已被否决的关联。
 
-> 真实库里暂时演示不出效果：两场 ACISC 会议的参会名单完全不重叠，所以按授权规则任何人的候选池都是 0。逻辑由 26 个测试覆盖（含一个人跨两场会的场景），但要在真实数据上看到提议，需要先有同一个人参加过的两场会。
+**候选池是"其他会议"，不是"更早的会议"。** `episodes.created_sim_time` 记的是载入时间而非会议日期，会议日期没有持久化，所以乱序导入会让顺序失真。CONTINUATION 的方向由模型读两条标题判定，不由这个排序保证——**请从较晚的那场会跑关联**，这样记下的 `prior_action_item_id` 才真的是更早那条。要让查询本身强制方向，需要把会议日期落到 episode 上。
+
+### 稳定演示
+
+演示时调模型会在观众面前重跑一个不确定的步骤：同一场会可能给出不同候选，一次限流就能带走整个演示。所以可以从已校验的人工标注派生抽取文件：
+
+```powershell
+python -m collab_agent check-annotation --cases fixtures\meeting_gold_20260302.json
+python -m collab_agent gold-to-extraction `
+  --gold fixtures\meeting_gold_20260302.json `
+  --output var\extractions\20260302-gold-derived.json
+```
+
+输出里 `provider` 记作 `gold-annotation`，下游不会把它误当模型产出；转换前强制跑标注校验，引文定位不到就拒绝转换。**这是演示辅助，不是评测捷径**——拿它去评测派生它的那份金标显然会得满分。
 
 ---
 

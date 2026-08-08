@@ -14,8 +14,22 @@ build/
 var/
 external/
 
+# Hand-annotated meetings hold a real transcript with real participant names.
+# This repository is public, so publishing one would publish a private
+# conversation. Ignored by default; remove this line deliberately if a
+# particular meeting is cleared for release.
+fixtures/meeting_gold_*.json
+!fixtures/meeting_gold_TEMPLATE.json
+
 # Third-party corpora are referenced, never vendored. fixtures/SOURCES.md
 # states this project does not copy a full corpus; committing one would
 # contradict that and make every clone carry 16MB of someone else's data.
 # Obtain AliMeeting4MUG from its own release and point --alimeeting4mug at it.
 datasets/
+
+# Evaluation runs hold the stored predictions, whose source_quote fields are
+# verbatim corpus text -- committing them would vendor the corpus by the back
+# door. The numbers they produce live in README and colwrok_SDD/18 §14.3;
+# regenerate a run with `eval-extraction --alimeeting4mug` when you need the
+# predictions themselves for offline re-scoring.
+evaluation_runs/

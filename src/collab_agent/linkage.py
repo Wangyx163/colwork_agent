@@ -81,6 +81,14 @@ CREATE TABLE IF NOT EXISTS action_item_links (
 # episode's roster. The roster is this project's authorisation boundary, so
 # crossing an episode must not be a way around it: being in this meeting does
 # not entitle anyone to see one they were not in.
+#
+# Ordering is by `created_sim_time`, which records when an episode was loaded,
+# not when the meeting happened -- the meeting date is not persisted on the
+# episode. So this returns *other* meetings, not provably *earlier* ones, and
+# a meeting imported out of order will appear out of order. The direction of a
+# CONTINUATION therefore rests on what the model reads in the two titles, not
+# on this ordering. Persisting a meeting date would let the query enforce it;
+# until then the honest claim is "other meetings you attended".
 CANDIDATE_POOL_SQL = """
 SELECT a.action_item_id, a.title, a.deliverable_key, a.identity_key,
        a.status, a.episode_id, e.created_sim_time AS episode_created_sim_time
@@ -128,7 +136,12 @@ def ensure_schema(database: Any) -> None:
 def candidate_pool(
     database: Any, *, episode_id: str, actor_id: str
 ) -> list[dict[str, Any]]:
-    """Prior action items this actor is entitled to be reminded of."""
+    """Action items from this actor's other meetings in the same organisation.
+
+    "Other", not "earlier" -- see the note on CANDIDATE_POOL_SQL. Run linkage
+    from the later meeting so a recorded `prior_action_item_id` really is the
+    earlier one.
+    """
 
     rows = database.all(CANDIDATE_POOL_SQL, (episode_id, episode_id, actor_id))
     return [dict(row) for row in rows]

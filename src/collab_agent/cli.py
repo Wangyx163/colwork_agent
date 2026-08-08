@@ -259,6 +259,19 @@ def _parser() -> argparse.ArgumentParser:
             "(consumes tokens)"
         ),
     )
+    link.add_argument(
+        "--with-embeddings",
+        action="store_true",
+        help=(
+            "score candidates semantically as well as lexically; results are "
+            "cached by content, so a repeated run is free"
+        ),
+    )
+    link.add_argument(
+        "--show-scores",
+        action="store_true",
+        help="print every candidate with both scores, not only the proposals",
+    )
 
     bind = subparsers.add_parser(
         "feishu-bind",
@@ -606,7 +619,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             actor_id = _resolve_actor(database, args.actor)
             complete = bailian_completer() if args.with_model else None
+
+            embed = None
+            cached_embedder = None
+            if args.with_embeddings or args.show_scores:
+                from .embeddings import BailianEmbedder, CachedEmbedder
+
+                cached_embedder = CachedEmbedder(
+                    database, BailianEmbedder(), sim_time=real_now()
+                )
+                embed = cached_embedder.embed
+
             results = []
+            scoreboard = []
             for item in items:
                 outcome = propose_for_action_item(
                     database,
@@ -616,22 +641,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     actor_id=actor_id,
                     sim_time=real_now(),
                     complete=complete,
+                    embed=embed,
                 )
                 if outcome["proposals"]:
                     results.append({"title": item["title"], **outcome})
-            print(
-                json.dumps(
-                    {
-                        "episode_id": episode_id,
-                        "actor_id": actor_id,
-                        "used_model": bool(complete),
-                        "action_items_scanned": len(items),
-                        "with_proposals": results,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
+                if args.show_scores and outcome.get("ranked"):
+                    scoreboard.append(
+                        {
+                            "task": item["title"],
+                            "candidates": [
+                                {
+                                    "prior_task": row["title"],
+                                    "lexical": row["lexical_similarity"],
+                                    "semantic": row["semantic_similarity"],
+                                }
+                                for row in outcome["ranked"]
+                            ],
+                        }
+                    )
+            report = {
+                "episode_id": episode_id,
+                "actor_id": actor_id,
+                "used_model": bool(complete),
+                "used_embeddings": bool(embed),
+                "action_items_scanned": len(items),
+                "with_proposals": results,
+            }
+            if cached_embedder is not None:
+                report["embedding_cache"] = {
+                    "hits": cached_embedder.hits,
+                    "misses": cached_embedder.misses,
+                }
+            if scoreboard:
+                report["scoreboard"] = scoreboard
+            print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0
         finally:
             database.close()

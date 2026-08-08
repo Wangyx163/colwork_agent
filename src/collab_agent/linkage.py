@@ -321,17 +321,29 @@ def propose_for_action_item(
     actor_id: str,
     sim_time: str,
     complete: Callable[[list[dict[str, str]]], str] | None = None,
+    embed: Callable[[Any], list[list[float]]] | None = None,
 ) -> dict[str, Any]:
     """Run both linkers over one action item and store what they propose.
 
     The deterministic floor always runs; the model runs only when one is
     supplied. Their proposals are merged with the floor winning any pair they
     both name, because a free certain answer beats a billed probable one.
+
+    `embed` adds a semantic score to every candidate. It changes what the
+    result reports, not what it decides -- ranking a pool that is passed whole
+    cannot alter the model's input, so the scores are there to be inspected and
+    to mark where a retrieval cut would go once the pool outgrows a prompt.
     """
 
     pool = candidate_pool(database, episode_id=episode_id, actor_id=actor_id)
     if not pool:
-        return {"pool_size": 0, "stored": [], "proposals": []}
+        return {"pool_size": 0, "stored": [], "proposals": [], "ranked": []}
+
+    ranked: list[dict[str, Any]] = []
+    if embed is not None:
+        from .embeddings import rank_candidates
+
+        ranked = rank_candidates(action_item, pool, embed=embed)
 
     proposals = DeterministicLinker().propose(action_item, pool)
     claimed = {proposal.prior_action_item_id for proposal in proposals}
@@ -353,6 +365,7 @@ def propose_for_action_item(
         "pool_size": len(pool),
         "stored": stored,
         "proposals": [proposal.as_payload() for proposal in proposals],
+        "ranked": ranked,
     }
 
 

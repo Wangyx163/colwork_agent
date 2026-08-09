@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from collab_agent.meeting import load_meeting_service
+from collab_agent.memory_lexicon import memory_value
 from collab_agent.models import canonical_json, parse_time
 from collab_agent.store import Database
 
@@ -86,20 +87,24 @@ class P1MemoryContextTests(unittest.TestCase):
         )["actor_id"]
         now = self.service.now()
         with self.db.transaction() as cursor:
-            for memory_id, actor_id, status, statement in (
-                ("memory_alice_confirmed", self.alice_id, "CONFIRMED", "Use concise checklists."),
-                ("memory_alice_draft", self.alice_id, "PRIVATE_DRAFT", "Unconfirmed preference."),
-                ("memory_bob_confirmed", self.bob_id, "CONFIRMED", "Use a detailed narrative."),
+            # Lexicon-shaped rows: the code is the fact, and the words shown to
+            # a colleague are derived from it. A row carrying only a sentence
+            # is a pre-lexicon leftover and is deliberately not projectable, so
+            # using that shape here would test the wrong thing.
+            for memory_id, actor_id, status, code in (
+                ("memory_alice_confirmed", self.alice_id, "CONFIRMED", "CONCLUSION_AND_BOUNDS"),
+                ("memory_alice_draft", self.alice_id, "PRIVATE_DRAFT", "CHECKLIST"),
+                ("memory_bob_confirmed", self.bob_id, "CONFIRMED", "CONTEXT_FIRST"),
             ):
                 cursor.execute(
                     "INSERT INTO collaboration_memories(memory_id, actor_id, topic, "
                     "value, visibility, status, evidence_refs, created_sim_time, "
                     "version, confirmed_by, confirmed_sim_time) "
-                    "VALUES (?, ?, 'COMMUNICATION_STYLE', ?, 'PRIVATE', ?, ?, ?, 1, ?, ?)",
+                    "VALUES (?, ?, 'BRIEF_DETAIL', ?, 'PRIVATE', ?, ?, ?, 1, ?, ?)",
                     (
                         memory_id,
                         actor_id,
-                        canonical_json({"statement": statement}),
+                        canonical_json(memory_value("BRIEF_DETAIL", code)),
                         status,
                         canonical_json([f"event:{memory_id}"]),
                         now,

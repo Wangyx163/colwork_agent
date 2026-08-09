@@ -69,6 +69,16 @@ MEMORY_TOPICS: dict[str, dict[str, Any]] = {
             ("OPTIONS_INCLUDED", "我求助时会带上候选方案", "可以直接帮我选，不用从头想"),
         ),
     },
+    "SCHEDULE_HABIT": {
+        "origin": SYSTEM_OBSERVED,
+        "title": "排期习惯",
+        "prompt": "关于给自己定时间，你更接近哪一种？",
+        "values": (
+            ("COMMIT_EARLY", "我倾向承诺得比团队要求更早", "找我的活通常会提前到手，可以早点安排下一步"),
+            ("COMMIT_TO_ASK", "我通常按团队要求的时间承诺", "按团队定的时间来对我就行"),
+            ("RENEGOTIATE_EARLY", "我一发现有风险就尽早改期", "我动时间通常提前说，看到我改期就是真有情况"),
+        ),
+    },
     # ---- Group B: what I need from others (self-declared only) ----
     "BRIEF_DETAIL": {
         "origin": SELF_DECLARED,
@@ -172,6 +182,28 @@ def memory_value(topic: str, code: str) -> dict[str, str]:
                     "lexicon_version": MEMORY_LEXICON_VERSION,
                 }
     raise ValueError("memory value is not allowed for this topic")
+
+
+def projected_value(topic: str, value: dict[str, Any]) -> dict[str, str] | None:
+    """The words to show for a stored entry, derived from its code.
+
+    The code is the fact -- it is what the subject actually confirmed. The
+    sentence beside it is presentation, so it is re-derived from the current
+    lexicon rather than read back from the row: entries written before a
+    wording change would otherwise be shown in words nobody uses any more, and
+    entries written before the lexicon existed carry no colleague-facing hint
+    at all.
+
+    Returns None when there is nothing safe to show -- no code, or a code that
+    is no longer in the lexicon. Those are not repaired by guessing which
+    modern value an old sentence meant; putting words in somebody's mouth is
+    the one failure this whole feature exists to avoid.
+    """
+
+    try:
+        return memory_value(topic, str(value.get("code") or ""))
+    except ValueError:
+        return None
 
 
 def memory_value_is_current(topic: str, value: dict[str, Any]) -> bool:

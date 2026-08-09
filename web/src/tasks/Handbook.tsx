@@ -1,7 +1,6 @@
-import { useState } from "react";
 import { messageId, postJson } from "../api";
 import { Button, Chip } from "../manage/TaskCard";
-import { Zone } from "../manage/Zone";
+import { Blank, Zone } from "../manage/Zone";
 import type { Act } from "./MyTaskCard";
 
 export interface LexiconValue {
@@ -30,55 +29,61 @@ export interface MemoryRow {
   } | null;
 }
 
-/** How you want to be worked with.
+/** Memory: what this system believes about how someone works.
  *
- *  Two different things live here and they are not the same act. The system
- *  can *observe* a habit and offer it back for confirmation, and a person can
- *  *declare* one outright. Only the second lets somebody say something about
- *  themselves the system has not seen yet, which is the whole point of having
- *  it -- an earlier pass shipped only the confirmations and quietly took that
- *  away.
+ *  Three rules decide everything on this panel, and dropping any one of them
+ *  turns it into something worth being uneasy about.
  *
- *  Nothing here changes permissions, task state or acceptance. It is advice
- *  to colleagues, which is why it sits below the work rather than among it. */
+ *  It never participates in a decision. Not permissions, not task state, not
+ *  escalation level, not acceptance. It is advice to colleagues, which is why
+ *  it sits below the work rather than among it.
+ *
+ *  Observed is not the same as true. Anything the system noticed arrives as a
+ *  PRIVATE_DRAFT and is visible to nobody else until the person confirms it --
+ *  otherwise the system would be labelling people behind their backs.
+ *
+ *  It states what a colleague should do, not what a person is like. That is
+ *  why every entry carries a collaborator hint: not "he works from drafts",
+ *  but "send him the rough version early, editing together beats waiting". */
 export function Handbook({
-  topics,
   memories,
   me,
   act,
+  onOpenSurvey,
+  unansweredCount,
 }: {
-  topics: LexiconTopic[];
   memories: MemoryRow[];
   me: string;
   act: Act;
+  onOpenSurvey: () => void;
+  unansweredCount: number;
 }) {
   const mine = memories.filter((memory) => memory.actor_id === me);
   const drafts = mine.filter((memory) => memory.status === "PRIVATE_DRAFT");
-  if (!topics.length && !mine.length) return null;
+  const confirmed = mine.filter((memory) => memory.status !== "PRIVATE_DRAFT");
 
   return (
     <Zone
       n="03"
-      name="我的协作说明书"
+      name="Memory"
       pending={drafts.length}
       pendingLabel={
-        drafts.length ? `${drafts.length} 条待你确认` : `${mine.length} 条`
+        drafts.length ? `${drafts.length} 条待你确认` : `${confirmed.length} 条`
       }
-      why="告诉同事该怎么跟你配合。不影响权限、任务状态或验收——纯粹是给人看的。"
+      why="系统观察到的你的协作习惯。不影响权限、任务状态或验收——只用来告诉同事该怎么跟你配合，而且没经你确认的，别人看不到。"
     >
       {drafts.length ? (
-        <div className="mb-4 grid gap-2">
-          <p className="text-[0.82rem] font-semibold">系统从你的协作里观察到的</p>
+        <div className="mb-3 grid gap-2">
           {drafts.map((memory) => (
             <div
               key={memory.memory_id}
-              className="rounded-md border border-rule-2 px-3.5 py-3"
+              className="rounded-md border border-warn bg-warn-wash px-3.5 py-3"
             >
               <div className="flex flex-wrap items-baseline gap-2">
                 <b className="text-[0.85rem]">
                   {memory.value?.statement || memory.topic}
                 </b>
-                <Chip tone="warn">待你确认</Chip>
+                <Chip tone="warn">只有你看得到</Chip>
               </div>
               <div className="mt-2 flex gap-2">
                 <Button
@@ -116,87 +121,38 @@ export function Handbook({
         </div>
       ) : null}
 
-      {topics.length ? (
-        <div className="grid gap-2">
-          <p className="text-[0.82rem] font-semibold">你自己想说的</p>
-          {topics.map((topic) => (
-            <TopicRow
-              key={topic.topic}
-              topic={topic}
-              current={
-                mine.find(
-                  (memory) =>
-                    memory.topic === topic.topic &&
-                    memory.status !== "REJECTED" &&
-                    memory.value?.code,
-                )?.value?.code || ""
-              }
-              act={act}
-            />
+      {confirmed.length ? (
+        <ul className="grid gap-1.5">
+          {confirmed.map((memory) => (
+            <li
+              key={memory.memory_id}
+              className="flex items-start gap-2 rounded border border-rule-2 px-3 py-2 text-[0.82rem]"
+            >
+              <span className="mt-[0.42rem] size-[0.45rem] shrink-0 rounded-full bg-ok" />
+              <span>
+                {memory.value?.collaborator_hint ||
+                  memory.value?.statement ||
+                  memory.topic}
+              </span>
+            </li>
           ))}
-        </div>
-      ) : null}
-    </Zone>
-  );
-}
+        </ul>
+      ) : drafts.length ? null : (
+        <Blank>还没有确认过的条目。</Blank>
+      )}
 
-function TopicRow({
-  topic,
-  current,
-  act,
-}: {
-  topic: LexiconTopic;
-  current: string;
-  act: Act;
-}) {
-  const [picked, setPicked] = useState(current);
-  const chosen = topic.values.find((value) => value.code === picked);
-
-  return (
-    <div className="rounded-md border border-rule-2 px-3.5 py-3">
-      <p className="text-[0.85rem] font-semibold">{topic.title}</p>
-      <p className="mt-0.5 mb-2 text-[0.79rem] text-ink-3">{topic.prompt}</p>
-      <div className="grid gap-1">
-        {topic.values.map((value) => (
-          <label
-            key={value.code}
-            className="flex items-start gap-2 text-[0.82rem]"
+      {unansweredCount ? (
+        <p className="mt-3 text-[0.8rem] text-ink-3">
+          还有 {unansweredCount} 个协作偏好没填，
+          <button
+            onClick={onOpenSurvey}
+            className="text-accent underline focus-visible:outline-2 focus-visible:outline-accent"
           >
-            <input
-              type="radio"
-              name={topic.topic}
-              className="mt-1"
-              checked={picked === value.code}
-              onChange={() => setPicked(value.code)}
-            />
-            {value.label}
-          </label>
-        ))}
-      </div>
-      {chosen?.collaborator_hint ? (
-        <p className="mt-2 rounded-r border-l-[3px] border-accent bg-accent-wash px-3 py-1.5 text-[0.78rem]">
-          同事会看到：{chosen.collaborator_hint}
+            去闹铃里填
+          </button>
+          。
         </p>
       ) : null}
-      {picked && picked !== current ? (
-        <div className="mt-2">
-          <Button
-            onClick={() =>
-              void act(
-                () =>
-                  postJson("/api/memories/declare", {
-                    topic: topic.topic,
-                    code: picked,
-                    message_id: messageId("declare"),
-                  }),
-                "已更新你的协作说明书",
-              )
-            }
-          >
-            保存
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    </Zone>
   );
 }

@@ -6,6 +6,7 @@ import { TaskCard } from "./manage/TaskCard";
 import { Blank, Zone } from "./manage/Zone";
 import { Bell } from "./tasks/Bell";
 import { Handbook } from "./tasks/Handbook";
+import { unanswered } from "./tasks/Survey";
 import { IdentityGate, WhoAmI, signOut, storedActor } from "./tasks/WhoAmI";
 import { MyTaskCard, type Act } from "./tasks/MyTaskCard";
 import { VotePanel } from "./tasks/VotePanel";
@@ -21,6 +22,7 @@ export default function TasksPage() {
   const [flash, setFlash] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [history, setHistory] = useState(false);
+  const [askSurvey, setAskSurvey] = useState(false);
   const cards = useRef(new Map<string, HTMLElement>());
 
   const load = useCallback(async () => {
@@ -107,7 +109,13 @@ export default function TasksPage() {
           {formatDay(state.episode.current_sim_time as string)}
         </span>
         <div className="ml-auto flex items-center gap-3">
-          <Bell state={state} onFocus={focus} />
+          <Bell
+            state={state}
+            act={act}
+            onFocus={focus}
+            openSurvey={askSurvey}
+            onSurveyOpened={() => setAskSurvey(false)}
+          />
           {coordinator ? (
             <a
               className="font-mono text-[0.75rem] text-accent underline"
@@ -216,10 +224,17 @@ export default function TasksPage() {
       ) : null}
 
       <Handbook
-        topics={state.memory_lexicon?.topics ?? []}
         memories={state.memories ?? []}
         me={me}
         act={act}
+        onOpenSurvey={() => setAskSurvey(true)}
+        unansweredCount={
+          unanswered(
+            state.memory_lexicon?.topics ?? [],
+            state.memories ?? [],
+            me,
+          ).length
+        }
       />
     </div>
   );

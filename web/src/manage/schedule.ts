@@ -25,6 +25,12 @@ export interface Row {
   done: boolean;
   /** Already past its team date without being finished. */
   overdue: boolean;
+  /** Whole days past the team date, when overdue. The strip does not spend
+   *  width on time that has gone, so lateness is stated rather than measured. */
+  overdueDays: number;
+  /** A date that falls before the window and has been pinned to its left edge,
+   *  so a mark drawn there is not read as "due today". */
+  clamped: boolean;
 }
 
 export interface Strip {
@@ -83,12 +89,12 @@ const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
  *  other, and a bar that means a different number of days on every line would
  *  make that comparison a lie.
  *
- *  The window opens at *now* -- what is being read here is what remains, and
- *  the day a task was dispatched changes nothing a coordinator can act on. It
- *  only reaches back further when something is already overdue, because a
- *  deadline that has passed has to stay visible to be acted on; then the
- *  vertical mark sits inside the strip rather than on its left edge, and the
- *  distance behind it is exactly how late things are. */
+ *  The window opens at *now* and never reaches back. Time that has gone is not
+ *  something anyone can plan against, and spending width on it squeezes the
+ *  part that can be acted on -- three days of history push every remaining bar
+ *  into the right half of the strip. A deadline that has already passed is
+ *  pinned to the left edge and says how late it is in words instead, which is
+ *  what a reader wanted from that distance anyway. */
 export function buildStrip(
   tasks: Task[],
   nowIso: string | null | undefined,
@@ -108,16 +114,18 @@ export function buildStrip(
 
   if (!prepared.length) return { rows: [], ticks: [], now: null };
 
-  const low = startOfDay(Math.min(...instants));
-  let high = startOfDay(Math.max(...instants));
-  if (high <= Math.max(...instants)) high = addDays(high, 1);
-  // Only ever widen to the right: pushing `low` earlier would move the
-  // now-mark off the left edge for no reason, and that mark is the origin
-  // every bar is read from.
+  // Today's midnight, always. The window never opens earlier, so the axis
+  // starts where planning starts.
+  const low = startOfDay(now);
+  const latest = Math.max(...instants, low);
+  let high = startOfDay(latest);
+  if (high <= latest) high = addDays(high, 1);
   const floor = addDays(low, minDays);
   if (high < floor) high = floor;
   const span = high - low || DAY;
-  const at = (value: number) => (value - low) / span;
+  // Anything behind the window sits on its edge rather than off the strip.
+  const at = (value: number) =>
+    Math.min(1, Math.max(0, (value - low) / span));
 
   const today = startOfDay(now);
   const ticks: { label: string; at: number; today: boolean }[] = [];
@@ -140,6 +148,8 @@ export function buildStrip(
       const late =
         promised !== null && required !== null && promised > required;
       const done = DONE.has(task.status);
+      const overdue = !done && required !== null && required < now;
+      const earliest = Math.min(promised ?? now, required ?? now);
       return {
         task,
         owner:
@@ -147,14 +157,18 @@ export function buildStrip(
           task.owner_display_name ||
           "未指派",
         // Every bar starts at now: it is the remaining runway that matters.
-        start: at(Math.min(now, promised ?? now, required ?? now)),
+        start: at(Math.max(now, Math.min(now, earliest))),
         promised: promised === null ? null : at(promised),
         required: required === null ? null : at(required),
         ghosts: ghosts.map(at),
         late,
         lateDays: late ? Math.round((promised! - required!) / DAY) : 0,
         done,
-        overdue: !done && required !== null && required < now,
+        overdue,
+        overdueDays: overdue
+          ? Math.max(1, Math.round((startOfDay(now) - startOfDay(required!)) / DAY))
+          : 0,
+        clamped: earliest < low,
       };
     },
   );

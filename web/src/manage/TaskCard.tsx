@@ -93,7 +93,7 @@ function disclosureLabel(task: Task): string {
     return "看执行过程";
   if (["PENDING_ASSIGNMENT", "NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(task.status))
     return "看抽取依据";
-  return "看验收结论";
+  return "看验收内容";
 }
 
 /* ------------------------------------------------------- detail sections */
@@ -297,19 +297,30 @@ function ProvenanceDetail({ task }: { task: Task }) {
   );
 }
 
+/** A finished task: what was accepted, then who accepted it.
+ *
+ *  Showing only the verdict answered a question nobody asks. "验收通过" is
+ *  already on the chip; what a reader opens a finished task for is the thing
+ *  that was delivered. */
 function OutcomeDetail({ task }: { task: Task }) {
   const review = (task.activity || []).find((entry) => entry.kind === "REVIEW");
-  if (!review) return <Empty>没有留下验收记录。</Empty>;
+  const version = task.current_version || task.latest_version;
+  if (!review && !version) return <Empty>没有留下验收记录。</Empty>;
   return (
-    <ul>
-      <Line
-        when={review.sim_time}
-        who={review.actor}
-        title={review.title}
-        detail={review.detail}
-        tone="ok"
-      />
-    </ul>
+    <>
+      {version ? <DeliveryDetail task={task} /> : null}
+      {review ? (
+        <ul className={version ? "mt-3 border-t border-rule-2 pt-2" : ""}>
+          <Line
+            when={review.sim_time}
+            who={review.actor}
+            title={review.title}
+            detail={review.detail}
+            tone="ok"
+          />
+        </ul>
+      ) : null}
+    </>
   );
 }
 

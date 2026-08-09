@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ManageState, Notice, Task } from "../manage-types";
+import type { Act } from "./MyTaskCard";
+import { Survey, unanswered } from "./Survey";
 
 const SEEN_KEY = "seenNotice";
 
@@ -13,12 +15,20 @@ const SEEN_KEY = "seenNotice";
  *  domain, and inventing one would put a UI concern into the audit trail. */
 export function Bell({
   state,
+  act,
   onFocus,
+  openSurvey,
+  onSurveyOpened,
 }: {
   state: ManageState;
+  act: Act;
   onFocus: (actionItemId: string) => void;
+  /** Set when the handbook panel asks for the questions to be brought up. */
+  openSurvey?: boolean;
+  onSurveyOpened?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [askedEnough, setAskedEnough] = useState(false);
   const [seen, setSeen] = useState(
     () => localStorage.getItem(`${SEEN_KEY}:${state.principal.actor_id}`) || "",
   );
@@ -32,7 +42,22 @@ export function Bell({
   );
   const cut = informational.findIndex((notice) => notice.notice_id === seen);
   const unseen = cut < 0 ? informational : informational.slice(0, cut);
-  const total = pending.length + unseen.length;
+  const questions = askedEnough
+    ? []
+    : unanswered(
+        state.memory_lexicon?.topics ?? [],
+        state.memories ?? [],
+        state.principal.actor_id,
+      );
+  const total = pending.length + unseen.length + (questions.length ? 1 : 0);
+
+  useEffect(() => {
+    if (openSurvey) {
+      setAskedEnough(false);
+      setOpen(true);
+      onSurveyOpened?.();
+    }
+  }, [openSurvey, onSurveyOpened]);
 
   useEffect(() => {
     if (!open) return;
@@ -88,6 +113,14 @@ export function Bell({
               {total} 项
             </span>
           </p>
+
+          {questions.length ? (
+            <Survey
+              topics={questions}
+              act={act}
+              onDone={() => setAskedEnough(true)}
+            />
+          ) : null}
 
           {pending.map((task) => (
             <Row

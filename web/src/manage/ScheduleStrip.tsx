@@ -1,4 +1,4 @@
-import { describe, type Row, type Strip } from "./schedule";
+import { describe, formatDay, type Row, type Strip } from "./schedule";
 
 const GRID = "grid-cols-[5.5rem_1fr] sm:grid-cols-[10rem_1fr]";
 
@@ -119,6 +119,19 @@ function StripRow({
     >
       <span className="truncate text-[0.78rem]">{row.task.title}</span>
 
+      {row.overdue ? (
+        /* Nothing to draw: the whole window it had is behind the strip. Saying
+           how late it is beats leaving a reader to measure a gap that is not
+           on screen. */
+        <span className="flex items-center gap-2 text-[0.78rem]">
+          <span className="rounded-sm bg-bad-wash px-1.5 py-px font-mono text-[0.68rem] text-bad">
+            逾期 {row.overdueDays} 天
+          </span>
+          <span className="font-mono text-[0.68rem] text-ink-3">
+            {row.owner} · 团队要求 {formatDay(row.task.team_required_by_sim_time)}
+          </span>
+        </span>
+      ) : (
       <span className="relative h-[1.35rem]">
         <span className="absolute top-1/2 right-0 left-0 h-px -translate-y-1/2 bg-rule-2" />
 
@@ -206,6 +219,7 @@ function StripRow({
           </span>
         ) : null}
       </span>
+      )}
     </button>
   );
 }

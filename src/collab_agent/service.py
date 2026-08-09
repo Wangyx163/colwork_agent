@@ -15,8 +15,10 @@ from .memory_lexicon import (
     SELF_DECLARED,
     canonical_topic,
     memory_value,
+    projected_value,
     topic_origin,
 )
+from .memory_nomination import MEMORY_NOMINATION_PROMPT_VERSION
 from .models import (
     ActionItemStatus,
     AssignmentResponse,
@@ -186,7 +188,12 @@ class CoordinationService:
         episode_id: str = "episode_p0",
         run_id: str = "run_p0",
         im: Any | None = None,
+        memory_nominator: Any | None = None,
     ):
+        # Off unless something injects one. The counting rules below need no
+        # provider, no network and no tokens, so a demo and the evaluation both
+        # run without a model deciding anything about a person.
+        self.memory_nominator = memory_nominator
         self.db = database
         self.fixture = fixture
         # The IM adapter is injected so a live tenant (FeishuIM) can replace the
@@ -655,11 +662,19 @@ class CoordinationService:
         memories: list[dict[str, Any]] = []
         for row in rows:
             value = self._decoded_json(row["value"], {})
+            topic = canonical_topic(row["topic"])
+            shown = projected_value(topic, value)
+            # Same rule as the workbench projection: an entry with no code
+            # predates the lexicon and has no colleague-facing wording, so
+            # there is nothing here that may be shown to somebody else.
+            if shown is None:
+                continue
             memories.append(
                 {
                     "memory_id": row["memory_id"],
-                    "topic": row["topic"],
-                    "statement": str(value.get("statement") or ""),
+                    "topic": topic,
+                    "code": shown["code"],
+                    "collaborator_hint": shown["collaborator_hint"],
                     "version": int(row["version"]),
                     **(
                         {
@@ -4776,6 +4791,57 @@ class CoordinationService:
                         [item["event_id"] for item in quick_signals],
                     )
                 )
+            # A nominator, when one is injected, may reach the nine labels the
+            # counting rules cannot -- they only ever emit ITERATIVE_REVIEW,
+            # ASK_WHEN_BLOCKED and QUICK_SIGNAL, one per topic. It is additive
+            # and subordinate: a topic the rules already covered is left alone,
+            # every label is re-checked against the lexicon, every citation
+            # against this task's own events, and the result lands as a draft
+            # like any other. A provider failure loses nominations, not the
+            # report -- the deterministic floor has already been computed.
+            if self.memory_nominator is not None:
+                covered = {topic for topic, _, _ in candidate_specs}
+                settled = [
+                    {"topic": row["topic"], "code": str(code)}
+                    for row in self.db.all(
+                        "SELECT topic, value FROM collaboration_memories "
+                        "WHERE actor_id = ? AND status IN "
+                        "('CONFIRMED','REJECTED','SUPERSEDED')",
+                        (accepted["owner_actor_id"],),
+                    )
+                    if (code := (self._decoded_json(row["value"], {}) or {}).get("code"))
+                ]
+                try:
+                    nominated = self.memory_nominator.nominate(
+                        report,
+                        evidence_refs=set(source_event_ids)
+                        | {f'version:{item["version_id"]}' for item in versions}
+                        | {
+                            f'assistance:{item["assistance_request_id"]}'
+                            for item in assistance
+                        },
+                        existing=settled,
+                    )
+                except Exception as error:  # noqa: BLE001 - nominations are optional
+                    report["nomination_error"] = repr(error)
+                    nominated = []
+                for item in nominated:
+                    if item.topic in covered:
+                        continue
+                    candidate_specs.append(
+                        (
+                            item.topic,
+                            {
+                                **memory_value(item.topic, item.code),
+                                "nominated_by": "model",
+                                "prompt_version": (
+                                    MEMORY_NOMINATION_PROMPT_VERSION
+                                ),
+                            },
+                            list(item.evidence_refs),
+                        )
+                    )
+
             # How broadly a behaviour was seen is reported rather than used as a
             # gate.  Requiring two tasks would suppress almost every candidate in
             # a three-to-five task meeting, where most people own one task; the

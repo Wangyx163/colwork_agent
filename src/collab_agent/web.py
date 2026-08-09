@@ -17,7 +17,11 @@ from .auth import (
 )
 from .attachments import MAX_ATTACHMENT_COUNT, MAX_TOTAL_ATTACHMENT_BYTES
 from .metrics import build_report
-from .memory_lexicon import memory_lexicon_payload
+from .memory_lexicon import (
+    canonical_topic,
+    memory_lexicon_payload,
+    projected_value,
+)
 from .models import ASSIGNMENT_RETURN_REASONS, OTHER_RETURN_REASON, parse_time
 
 
@@ -543,13 +547,24 @@ def workbench_state(
                 )
                 for memory in memory_rows:
                     value = _decode_json(memory["value"]) or {}
+                    topic = canonical_topic(memory["topic"])
+                    shown = projected_value(topic, value)
+                    # Nothing safe to show: an entry from before the lexicon,
+                    # carrying a sentence but no code. Dropped rather than
+                    # degraded, because the fallback was the first-person
+                    # sentence -- which describes the person to a colleague
+                    # instead of telling the colleague what to do.
+                    if shown is None:
+                        continue
                     row["collaboration_hints"].append(
                         {
                             "actor_id": assignment["actor_id"],
                             "display_name": assignment["display_name"],
-                            "topic": memory["topic"],
-                            "code": value.get("code"),
-                            "statement": value.get("statement"),
+                            "topic": topic,
+                            "code": shown["code"],
+                            # What the colleague reads. The first-person
+                            # statement stays out of this projection.
+                            "collaborator_hint": shown["collaborator_hint"],
                         }
                     )
         active_commitment = db.one(

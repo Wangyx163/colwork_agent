@@ -255,9 +255,16 @@ class AssignmentFlowTests(unittest.TestCase):
             message_id="partner-hint",
         )
         hint = built["context"]["confirmed_memories"][0]
+        # What a partner receives is the instruction, not the self-description:
+        # "they tell me about risk first" is a fact about a person, while
+        # "when they speak up there is usually something to handle" is
+        # something the reader can act on.
         self.assertEqual(
-            hint["statement"],
-            memory_value("PROGRESS_SIGNAL", "RISK_FIRST")["statement"],
+            hint["collaborator_hint"],
+            memory_value("PROGRESS_SIGNAL", "RISK_FIRST")["collaborator_hint"],
+        )
+        self.assertNotIn(
+            "statement", hint, "the first-person sentence stays with its author"
         )
         self.assertNotIn("evidence_refs", hint)
 
@@ -272,8 +279,8 @@ class AssignmentFlowTests(unittest.TestCase):
         )
         owner_state = workbench_state(self.service, principal=owner_principal)
         self.assertEqual(
-            owner_state["tasks"][0]["collaboration_hints"][0]["statement"],
-            memory_value("PROGRESS_SIGNAL", "RISK_FIRST")["statement"],
+            owner_state["tasks"][0]["collaboration_hints"][0]["collaborator_hint"],
+            memory_value("PROGRESS_SIGNAL", "RISK_FIRST")["collaborator_hint"],
         )
         self.assertNotIn(
             "collaboration_hints",

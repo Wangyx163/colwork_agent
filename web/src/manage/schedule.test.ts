@@ -91,18 +91,36 @@ test("day boundaries are the reader's midnights, not UTC's", () => {
   );
 });
 
-test("it reaches back only far enough to keep an overdue date visible", () => {
+test("the window never opens before today, however overdue a task is", () => {
+  /* Spending width on time that has gone squeezes the part anyone can still
+     act on: three days of history push every remaining bar into the right
+     half of the strip. */
   const strip = buildStrip(
-    [task({ team_required_by_sim_time: "2026-08-06T17:00:00+10:00" })],
+    [
+      task({
+        team_required_by_sim_time: "2026-08-01T17:00:00+10:00",
+        promised_by_sim_time: "2026-08-01T17:00:00+10:00",
+      }),
+    ],
     NOW,
   );
+  const row = strip.rows[0];
 
-  assert.ok(strip.now! > 0, "now is no longer the left edge");
-  assert.ok(
-    strip.rows[0].required! < strip.now!,
-    "a date that has passed sits behind the now-mark",
-  );
-  assert.equal(strip.rows[0].overdue, true);
+  assert.equal(strip.ticks[0].today, true, "the axis opens on today");
+  assert.equal(row.required, 0, "a date behind the window pins to its edge");
+  assert.equal(row.clamped, true, "and says so, so the pin is not read as due today");
+  assert.equal(row.overdue, true);
+  assert.equal(row.overdueDays, 8);
+});
+
+test("an overdue task states its lateness rather than drawing it", () => {
+  const row = buildStrip(
+    [task({ team_required_by_sim_time: "2026-08-07T17:00:00+10:00" })],
+    NOW,
+  ).rows[0];
+
+  assert.equal(row.overdue, true);
+  assert.equal(row.overdueDays, 2);
 });
 
 test("a single afternoon of deadlines still spans a readable window", () => {

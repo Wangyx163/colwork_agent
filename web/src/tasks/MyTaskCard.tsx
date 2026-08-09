@@ -21,6 +21,18 @@ const SIGNAL_LABEL: Record<string, string> = {
   READY_TO_SUBMIT: "快好了",
 };
 
+/** The last signal on a task is not only ever a quick status: accepting a
+ *  dispatch, submitting, asking for help and moving a promise all record one.
+ *  Without these the card printed ARTIFACT_SUBMITTED at the reader. */
+const EVENT_LABEL: Record<string, string> = {
+  ...SIGNAL_LABEL,
+  CLAIMED: "已认领",
+  ASSIGNMENT_ACCEPTED: "已接受派发",
+  ARTIFACT_SUBMITTED: "已提交成果",
+  ASSISTANCE_REQUESTED: "发出了求助",
+  PROMISE_REVISED: "改了承诺时间",
+};
+
 const HELP_LABEL: Record<string, string> = {
   EXPERTISE: "需要专业意见",
   CAPACITY: "人手不够",
@@ -126,10 +138,10 @@ export function MyTaskCard({
           {task.last_owner_signal ? (
             <p className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[0.71rem] text-ink-3">
               <Chip>
-                {SIGNAL_LABEL[task.last_owner_signal.signal_type] ||
+                {EVENT_LABEL[task.last_owner_signal.signal_type] ||
                   task.last_owner_signal.signal_type}
               </Chip>
-              {formatDay(task.last_owner_signal.signal_at)} 报的
+              {formatDay(task.last_owner_signal.signal_at)}
               {task.last_owner_signal.note
                 ? ` · ${task.last_owner_signal.note}`
                 : ""}

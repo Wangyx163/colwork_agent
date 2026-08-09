@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -403,7 +404,33 @@ def _load_meeting_from_args(args: argparse.Namespace) -> tuple[Database, Coordin
         participant_names=args.participant,
         im=im,
     )
+    _catch_clock_up(service)
     return database, service
+
+
+def _catch_clock_up(service: CoordinationService) -> None:
+    """Bring a live meeting's clock up to the wall clock.
+
+    `now()` reads `episodes.current_sim_time`, which is written once when the
+    meeting is imported and then only by an explicit advance. Nothing advanced
+    it while serving, so a meeting imported on Tuesday still believed it was
+    Tuesday on Friday: deadlines never arrived, the schedule strip drew "now"
+    days behind every bar, and the header stated a date that was simply wrong.
+
+    Evaluation keeps the virtual clock -- that is what makes a run
+    reproducible -- so this belongs here, on the path that serves real people,
+    rather than in `now()` where it would move under the metrics. It is a
+    catch-up at startup, not a running clock: REAL_SCHEDULER in
+    capabilities.json is still NOT_DONE, and nothing fires deadlines on its own
+    yet.
+    """
+
+    from .models import iso_time, parse_time  # noqa: PLC0415 - local by design
+
+    real_now = datetime.now(UTC)
+    if parse_time(service.now()) >= real_now:
+        return
+    service.advance_time(iso_time(real_now))
 
 
 def _database_factory(
@@ -821,6 +848,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 participant_names=args.participant,
                 im=im,
             )
+            _catch_clock_up(service)
             bridge = AssignmentBridge(service, log=flushing_log)
             notifier = AssignmentNotifier(service, im, log=flushing_log)
             app = FeishuApp(

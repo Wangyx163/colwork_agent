@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getJson, messageId, postJson } from "./api";
+import { getJson } from "./api";
 import type { ManageState, Task } from "./manage-types";
 import { formatDay } from "./manage/schedule";
-import { Button, TaskCard } from "./manage/TaskCard";
+import { TaskCard } from "./manage/TaskCard";
 import { Blank, Zone } from "./manage/Zone";
 import { Bell } from "./tasks/Bell";
-import { IdentityGate, signOut, storedActor } from "./tasks/Identity";
+import { Handbook } from "./tasks/Handbook";
+import { IdentityGate, WhoAmI, signOut, storedActor } from "./tasks/WhoAmI";
 import { MyTaskCard, type Act } from "./tasks/MyTaskCard";
 import { VotePanel } from "./tasks/VotePanel";
 
@@ -115,15 +116,18 @@ export default function TasksPage() {
               会议工作台
             </a>
           ) : null}
-          <button
-            onClick={() => {
-              signOut();
-              setReady(false);
+          <WhoAmI
+            name={storedActor()}
+            coordinator={coordinator}
+            onSwitched={() => {
+              // The new identity sees a different meeting: drop what the last
+              // one had open rather than carrying a selection across people.
+              setSelected(null);
+              setHistory(false);
+              setState(null);
+              void load();
             }}
-            className="font-mono text-[0.75rem] text-ink-3 underline hover:text-ink"
-          >
-            换身份
-          </button>
+          />
         </div>
       </header>
 
@@ -211,7 +215,12 @@ export default function TasksPage() {
         </Zone>
       ) : null}
 
-      <MemoryZone state={state} act={act} />
+      <Handbook
+        topics={state.memory_lexicon?.topics ?? []}
+        memories={state.memories ?? []}
+        me={me}
+        act={act}
+      />
     </div>
   );
 }
@@ -223,81 +232,4 @@ function involvesMe(task: Task, me: string): boolean {
     Boolean(task.is_collaborator) ||
     inputs.some((input) => input.actor_id === me)
   );
-}
-
-/** The collaboration handbook.
- *
- *  Kept because it is the one place a person states how they want to be worked
- *  with, and it changes nothing about permissions, status or acceptance -- it
- *  is advice to colleagues, so it sits at the bottom rather than among the
- *  things that move work forward. */
-function MemoryZone({ state, act }: { state: ManageState; act: Act }) {
-  const memories = (state as unknown as { memories?: MemoryRow[] }).memories;
-  if (!memories?.length) return null;
-
-  return (
-    <Zone
-      n="03"
-      name="我的协作说明书"
-      pending={memories.filter((memory) => memory.status === "PRIVATE_DRAFT").length}
-      pendingLabel={`${memories.length} 条`}
-      why="系统从你过去的协作里观察到的习惯。只用来调整别人跟你配合的方式，不影响权限、任务状态或验收。"
-    >
-      <div className="grid gap-2">
-        {memories.map((memory) => (
-          <div
-            key={memory.memory_id}
-            className="rounded-md border border-rule-2 px-3.5 py-3"
-          >
-            <div className="flex flex-wrap items-baseline gap-2">
-              <b className="text-[0.85rem]">{memory.value?.code || memory.topic}</b>
-              <span className="rounded-sm bg-sunk px-1.5 py-px font-mono text-[0.68rem] text-ink-2">
-                {memory.status === "PRIVATE_DRAFT" ? "待你确认" : "已确认"}
-              </span>
-            </div>
-            {memory.status === "PRIVATE_DRAFT" ? (
-              <div className="mt-2 flex gap-2">
-                <Button
-                  onClick={() =>
-                    void act(
-                      () =>
-                        postJson(
-                          `/api/memories/${memory.memory_id}/confirm`,
-                          { message_id: messageId("memory") },
-                        ),
-                      "已确认，同事会看到这一条",
-                    )
-                  }
-                >
-                  确认
-                </Button>
-                <Button
-                  tone="ghost"
-                  onClick={() =>
-                    void act(
-                      () =>
-                        postJson(
-                          `/api/memories/${memory.memory_id}/reject`,
-                          { message_id: messageId("memory") },
-                        ),
-                      "已拒绝，不会再提示",
-                    )
-                  }
-                >
-                  不是这样
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </Zone>
-  );
-}
-
-interface MemoryRow {
-  memory_id: string;
-  topic: string;
-  status: string;
-  value?: { code?: string } | null;
 }

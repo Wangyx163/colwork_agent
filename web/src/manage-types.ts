@@ -217,6 +217,25 @@ export interface ManageState {
   participants: Participant[];
   principal: { actor_id: string; roles: string[]; episode_id?: string };
   allowed_surfaces: string[];
+  /* The collaboration handbook: what the system has observed about how
+     someone works, and the vocabulary they can use to say it themselves. */
+  memories?: {
+    memory_id: string;
+    actor_id: string;
+    topic: string;
+    status: string;
+    value?: { code?: string; statement?: string } | null;
+  }[];
+  memory_lexicon?: {
+    version?: string;
+    topics?: {
+      topic: string;
+      title: string;
+      prompt: string;
+      origin?: string;
+      values: { code: string; label: string; collaborator_hint?: string }[];
+    }[];
+  };
   aggregator_actor_id: string;
 }
 

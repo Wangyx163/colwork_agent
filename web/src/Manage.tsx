@@ -128,30 +128,14 @@ export default function ManagePage() {
           {state.meeting_progress.total} 个任务 · 现在{" "}
           {formatDay(state.episode.current_sim_time as string)}
         </span>
-        <div className="ml-auto flex flex-wrap items-center gap-4">
-          {/* One history switch for the console, not one per zone: "what is
-              already finished" is a single question about the meeting, and
-              answering it in four places made four half-answers. */}
-          <button
-            onClick={() => setReviewHistory((open) => !open)}
-            aria-pressed={reviewHistory}
-            className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[0.76rem] focus-visible:outline-2 focus-visible:outline-accent ${
-              reviewHistory
-                ? "border-accent bg-accent-wash text-accent"
-                : "border-rule text-ink-2 hover:bg-sunk hover:text-ink"
-            }`}
-          >
-            {reviewHistory ? "← 返回待办" : `🕐 历史 ${reviewed.length}`}
-          </button>
-          <nav className="flex gap-4 font-mono text-[0.75rem]">
-            <a className="text-accent underline" href="/tasks">
-              我的任务
-            </a>
-            <a className="text-accent underline" href="/observatory">
-              Observatory
-            </a>
-          </nav>
-        </div>
+        <nav className="ml-auto flex gap-4 font-mono text-[0.75rem]">
+          <a className="text-accent underline" href="/tasks">
+            我的任务
+          </a>
+          <a className="text-accent underline" href="/observatory">
+            Observatory
+          </a>
+        </nav>
       </header>
 
       {flash ? (
@@ -269,6 +253,21 @@ export default function ManagePage() {
         ) : (
           <Blank>没有待验收的成果。</Blank>
         )}
+
+        {/* Inside the zone, in the same place the participant page puts it.
+            At the top of the console it read as a page-wide mode switch while
+            it only ever changed this one list. */}
+        <div className="mt-3 text-right">
+          <button
+            onClick={() => setReviewHistory((open) => !open)}
+            aria-pressed={reviewHistory}
+            className="font-mono text-[0.75rem] text-ink-3 underline hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            {reviewHistory
+              ? "← 返回待验收"
+              : `🕐 看已验收 ${reviewed.length} 项`}
+          </button>
+        </div>
       </Zone>
 
       {/* 04 --------------------------------------------------------------- */}

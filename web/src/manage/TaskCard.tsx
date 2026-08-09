@@ -38,16 +38,20 @@ export function Button({
   disabled?: boolean;
   children: ReactNode;
 }) {
+  // Only the primary action carries a filled background. Four buttons of
+  // equal weight is the same as none: the eye has to read all of them before
+  // it can pick, which is exactly the work the card is supposed to save.
   const tones = {
-    accent: "bg-accent text-white hover:opacity-90",
-    good: "bg-ok text-white hover:opacity-90",
-    ghost: "border border-rule text-ink-2 hover:bg-sunk hover:text-ink",
+    accent: "bg-accent text-white shadow-sm hover:opacity-90",
+    good: "bg-ok text-white shadow-sm hover:opacity-90",
+    ghost:
+      "text-ink-2 hover:bg-sunk hover:text-ink border border-transparent hover:border-rule",
   };
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`rounded px-2.5 py-1 text-[0.79rem] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-45 ${tones[tone]}`}
+      className={`rounded px-2.5 py-1 text-[0.79rem] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-45 ${tones[tone]}`}
     >
       {children}
     </button>

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { Activity, Task } from "../manage-types";
 import { formatDay } from "./schedule";
+import { ProcessingReview } from "./ProcessingReview";
 
 /* ------------------------------------------------------------------ atoms */
 
@@ -222,7 +223,13 @@ function commitmentDetail(entry: Activity): string | undefined {
 }
 
 /** Delivery: the thing being judged, not a log of how it got here. */
-function DeliveryDetail({ task }: { task: Task }) {
+function DeliveryDetail({
+  task,
+  onRetryProcessing,
+}: {
+  task: Task;
+  onRetryProcessing?: (versionId: string) => void;
+}) {
   const version = task.latest_version || task.current_version;
   if (!version) return <Empty>还没有提交任何版本。</Empty>;
   const payload = version.payload || {};
@@ -294,6 +301,15 @@ function DeliveryDetail({ task }: { task: Task }) {
           上一次退回时写的：{version.review_comment}
         </p>
       ) : null}
+      <ProcessingReview
+        version={version}
+        attachments={attachments}
+        onRetry={
+          onRetryProcessing
+            ? () => onRetryProcessing(version.version_id)
+            : undefined
+        }
+      />
     </>
   );
 }
@@ -402,6 +418,7 @@ export function TaskCard({
   onSelect,
   cardRef,
   extra,
+  onRetryProcessing,
 }: {
   task: Task;
   late?: boolean;
@@ -413,13 +430,15 @@ export function TaskCard({
   /** Rendered below the disclosure: an inline form a zone opens on its own
    *  terms, kept out of the card so the card does not learn about forms. */
   extra?: ReactNode;
+  onRetryProcessing?: (versionId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const owner =
     task.assigned_owner_display_name || task.owner_display_name || "未指派";
 
   let detail: ReactNode;
-  if (task.status === "PENDING_ACCEPTANCE") detail = <DeliveryDetail task={task} />;
+  if (task.status === "PENDING_ACCEPTANCE")
+    detail = <DeliveryDetail task={task} onRetryProcessing={onRetryProcessing} />;
   else if (task.status === "TRACKING" || task.status === "BLOCKED")
     detail = <ExecutionDetail task={task} />;
   else if (task.status === "PENDING_ASSIGNMENT")

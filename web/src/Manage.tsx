@@ -576,6 +576,16 @@ function ReviewCard({
         task={task}
         selected={selected}
         cardRef={cardRef}
+        onRetryProcessing={(versionId) =>
+          void act(
+            () =>
+              postJson(
+                `/api/artifact-versions/${versionId}/retry-processing`,
+                { message_id: messageId("retry") },
+              ),
+            "已重新排队，稍等再看",
+          )
+        }
         actions={[
           { label: "验收通过", tone: "good", run: () => decide(true) },
           {

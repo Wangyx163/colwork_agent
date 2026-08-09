@@ -57,6 +57,51 @@ export interface Version {
     text_characters?: number;
   }[];
   processing_status?: string;
+  processing_error_detail?: string | null;
+  processing_retryable?: boolean;
+  /** What the per-version processor made of this submission.
+   *
+   *  Produced automatically between submission and acceptance by the prompt
+   *  in task_result_processing.py, which reads the attachments' extracted
+   *  text. Every point it states carries the source it came from, and it
+   *  recommends without deciding -- acceptance stays with a person. */
+  processing_result?: TaskResultReview | null;
+}
+
+export interface SourcedPoint {
+  text: string;
+  source_refs?: string[];
+}
+
+export interface TaskResultReview {
+  task_interpretation?: string;
+  task_alignment?: {
+    status: "ALIGNED" | "PARTIAL" | "MISALIGNED" | "INSUFFICIENT";
+    reason?: string;
+    confidence?: number;
+  };
+  evidence_digest?: {
+    title?: string;
+    summary?: string;
+    key_points?: SourcedPoint[];
+  } | null;
+  /** Null on purpose when the evidence does not support the task: an
+   *  unsupported deliverable must not be written as though it existed. */
+  normalized_result?: {
+    title?: string;
+    executive_summary?: string;
+    key_points?: SourcedPoint[];
+  } | null;
+  gaps?: {
+    issue: string;
+    severity: "BLOCKING" | "MAJOR" | "MINOR";
+    source_refs?: string[];
+  }[];
+  acceptance_advice?: { decision: "ACCEPT" | "REVISE"; reasons?: string[] };
+  source_coverage?: {
+    used_refs?: string[];
+    unreadable_or_uninspected?: string[];
+  };
 }
 
 /** Field names taken from a real payload. An assignment carries

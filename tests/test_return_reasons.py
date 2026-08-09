@@ -1,105 +1,97 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
+from pathlib import Path
 
-from collab_agent.feishu_cards import RETURN_REASONS, build_effect_card
+from collab_agent.feishu_cards import RETURN_REASONS, build_notification_card
 from collab_agent.models import ASSIGNMENT_RETURN_REASONS, OTHER_RETURN_REASON
-from collab_agent.web import WORKBENCH_HTML
+from collab_agent.service import CoordinationService
+
+
+WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
 class ReturnReasonParityTests(unittest.TestCase):
-    """The web workbench and the Feishu card must offer the identical list.
+    """The web page and the Feishu card must offer the identical list.
 
     A reason recorded from one surface is read back from the other, so a list
-    that drifts would leave returns that cannot be reproduced or explained.
+    that differs between them turns the same decision into two incomparable
+    ones. The server-rendered page held this by string substitution; the React
+    page holds it by taking the list from `state.vocabulary` at runtime, which
+    is what these tests pin down -- including that nobody has quietly pasted a
+    copy back into the TypeScript.
     """
 
-    def test_the_shared_list_is_non_empty(self) -> None:
-        self.assertTrue(ASSIGNMENT_RETURN_REASONS)
-        self.assertEqual(
-            len(set(ASSIGNMENT_RETURN_REASONS)),
-            len(ASSIGNMENT_RETURN_REASONS),
-            "duplicate reasons would be indistinguishable once stored",
-        )
+    def test_the_card_offers_exactly_the_canonical_reasons(self) -> None:
+        self.assertEqual(list(RETURN_REASONS), list(ASSIGNMENT_RETURN_REASONS))
 
-    def test_feishu_card_offers_exactly_the_shared_list(self) -> None:
-        card = build_effect_card(
+    def test_the_card_renders_every_reason(self) -> None:
+        card = build_notification_card(
             {
                 "effect_id": "eff_1",
-                "effect_type": "ASSIGNMENT_REQUEST",
-                "content": "请确认",
+                "effect_type": "ASSIGNMENT_RESPONSE_REQUIRED",
+                "notification": {
+                    "notification_contract_version": "notification.v1",
+                    "kind": "ASSIGNMENT_RESPONSE_REQUIRED",
+                    "action_item_id": "ai_1",
+                    "subject_id": "asg_1",
+                    "title": "任务派发",
+                    "summary": "请回应",
+                    "fields": [],
+                    "decisions": [
+                        {
+                            "name": "ASSIGNMENT_RETURN",
+                            "label": "退回重改",
+                            "requires_reason": True,
+                        }
+                    ],
+                    "deep_link_path": "/tasks",
+                },
             }
         )
-        picker = [
-            action
-            for element in card["elements"]
-            if element["tag"] == "action"
-            for action in element["actions"]
-            if action["tag"] == "select_static"
-        ][0]
+        rendered = json.dumps(card, ensure_ascii=False)
 
-        self.assertEqual(
-            [option["value"] for option in picker["options"]],
-            list(ASSIGNMENT_RETURN_REASONS),
+        for reason in ASSIGNMENT_RETURN_REASONS:
+            self.assertIn(reason, rendered)
+
+    def test_the_page_takes_the_list_from_the_server(self) -> None:
+        source = (WEB_SRC / "tasks" / "MyTaskCard.tsx").read_text(
+            encoding="utf-8"
         )
 
-    def test_workbench_page_ships_exactly_the_shared_list(self) -> None:
-        marker = "const RETURN_REASONS="
-        start = WORKBENCH_HTML.index(marker) + len(marker)
-        end = WORKBENCH_HTML.index(";", start)
-        shipped = json.loads(WORKBENCH_HTML[start:end])
+        self.assertIn("vocabulary.return_reasons", source)
+        for reason in (*ASSIGNMENT_RETURN_REASONS, OTHER_RETURN_REASON):
+            self.assertNotIn(
+                reason,
+                source,
+                "the reasons must come from state.vocabulary, not a copy",
+            )
 
-        self.assertEqual(shipped, list(ASSIGNMENT_RETURN_REASONS))
+    def test_the_page_takes_the_other_vocabularies_too(self) -> None:
+        """A button offering a value the domain rejects is a defect users find."""
 
-    def test_only_the_web_offers_a_free_text_option(self) -> None:
-        """A card picker cannot collect free text in the same tap, so offering
-        「其他」 there would produce a return with no reason -- which the domain
-        refuses."""
-
-        self.assertIn(OTHER_RETURN_REASON, WORKBENCH_HTML)
-        self.assertNotIn(OTHER_RETURN_REASON, RETURN_REASONS)
-
-        card = build_effect_card(
-            {
-                "effect_id": "eff_1",
-                "effect_type": "ASSIGNMENT_REQUEST",
-                "content": "请确认",
-            }
-        )
-        picker = [
-            action
-            for element in card["elements"]
-            if element["tag"] == "action"
-            for action in element["actions"]
-            if action["tag"] == "select_static"
-        ][0]
-        self.assertNotIn(
-            OTHER_RETURN_REASON, [option["value"] for option in picker["options"]]
+        source = (WEB_SRC / "tasks" / "MyTaskCard.tsx").read_text(
+            encoding="utf-8"
         )
 
-    def test_choosing_other_reads_the_free_text_box(self) -> None:
-        self.assertIn("function returnReasonFor(", WORKBENCH_HTML)
-        self.assertIn("-other`", WORKBENCH_HTML)
-        self.assertIn("toggleOtherReason", WORKBENCH_HTML)
+        self.assertIn("vocabulary.quick_signals", source)
+        self.assertIn("vocabulary.assistance_categories", source)
+        # Labels are local because the server stores codes; a *list* is not.
+        listed = re.findall(r"^\s*const [A-Z_]+ = \[", source, re.MULTILINE)
+        self.assertEqual(listed, [], "no vocabulary list may live in the page")
 
-    def test_the_popover_closes_on_an_outside_click(self) -> None:
-        self.assertIn("panel.contains(e.target)", WORKBENCH_HTML)
-        self.assertIn("Escape", WORKBENCH_HTML)
-
-    def test_no_placeholder_survives_into_the_served_page(self) -> None:
-        self.assertNotIn("__RETURN_REASONS__", WORKBENCH_HTML)
-
-    def test_feishu_module_re_exports_rather_than_redefines(self) -> None:
-        self.assertIs(RETURN_REASONS, ASSIGNMENT_RETURN_REASONS)
-
-    def test_workbench_return_button_reads_the_reason_select(self) -> None:
-        self.assertIn("-reason", WORKBENCH_HTML)
-        self.assertIn(
-            "decision==='RETURN_FOR_REVISION'?returnReasonFor(id):note",
-            WORKBENCH_HTML,
-            "a return must take the reason control, not the accept note",
+    def test_every_code_the_page_can_label_is_one_the_domain_accepts(
+        self,
+    ) -> None:
+        source = (WEB_SRC / "tasks" / "MyTaskCard.tsx").read_text(
+            encoding="utf-8"
         )
+        block = source.split("const SIGNAL_LABEL")[1].split("};")[0]
+        labelled = set(re.findall(r"^\s+([A-Z_]+):", block, re.MULTILINE))
+
+        self.assertEqual(labelled, set(CoordinationService.QUICK_SIGNAL_TYPES))
 
 
 if __name__ == "__main__":

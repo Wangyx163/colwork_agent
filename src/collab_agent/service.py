@@ -167,6 +167,17 @@ class CoordinationService:
         "READY_TO_SUBMIT",
     }
 
+    #: Named so the page offering these buttons and the guard rejecting
+    #: anything else read from one list. Inline, they drifted the moment a
+    #: category was added on one side.
+    ASSISTANCE_CATEGORIES = (
+        "EXPERTISE",
+        "CAPACITY",
+        "DEPENDENCY",
+        "DECISION",
+        "OTHER",
+    )
+
     def __init__(
         self,
         database: Database,
@@ -3766,7 +3777,7 @@ class CoordinationService:
         summary = summary.strip()
         target_actor_id = target_actor_id.strip()
         blocking_action_item_id = (blocking_action_item_id or "").strip() or None
-        if category not in {"CAPACITY", "EXPERTISE", "DEPENDENCY", "DECISION", "OTHER"}:
+        if category not in self.ASSISTANCE_CATEGORIES:
             raise ValueError("unsupported assistance category")
         if not summary:
             raise ValueError("assistance summary is required")

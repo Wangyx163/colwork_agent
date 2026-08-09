@@ -96,9 +96,16 @@ function StripRow({
   selected: boolean;
   onPick: (actionItemId: string) => void;
 }) {
-  const allowed = row.required ?? row.promised ?? row.start;
-  const end = row.promised ?? allowed;
-  const width = Math.max(0, allowed - row.start);
+  // The bar is what this person committed to; the cap is what the team needs.
+  // Reading the two against each other is the whole point of the row: the bar
+  // stopping short of the cap is slack, and running past it is the conflict.
+  // Before a task is accepted there is no promise, so the bar falls back to
+  // the requirement -- there is nothing yet to compare it against.
+  const cap = row.required;
+  const commitment = row.promised ?? cap ?? row.start;
+  const solidEnd = cap === null ? commitment : Math.min(commitment, cap);
+  const end = Math.max(commitment, cap ?? commitment);
+  const width = Math.max(0, solidEnd - row.start);
   const inside = width >= NAME_FITS;
 
   return (
@@ -130,6 +137,19 @@ function StripRow({
             style={{ left: `${ghost * 100}%` }}
           />
         ))}
+
+        {/* Finishing ahead of the deadline is worth seeing, so the gap the bar
+            leaves before the cap is drawn rather than left as blank track. */}
+        {cap !== null && commitment < cap ? (
+          <span
+            className="absolute top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-ok/40"
+            style={{
+              left: `${commitment * 100}%`,
+              width: `${(cap - commitment) * 100}%`,
+            }}
+            title="比团队要求早"
+          />
+        ) : null}
 
         {/* The window the team allows. */}
         <span
@@ -163,8 +183,8 @@ function StripRow({
           <span
             className="absolute top-1/2 h-[3px] -translate-y-1/2 text-warn"
             style={{
-              left: `${allowed * 100}%`,
-              width: `${Math.max(0, end - allowed) * 100}%`,
+              left: `${solidEnd * 100}%`,
+              width: `${Math.max(0, end - solidEnd) * 100}%`,
               background:
                 "repeating-linear-gradient(90deg,currentColor 0 3px,transparent 3px 6px)",
             }}

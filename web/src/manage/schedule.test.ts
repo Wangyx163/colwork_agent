@@ -124,6 +124,23 @@ test("a promise past the team date is late by whole days", () => {
   assert.ok(row.promised! > row.required!);
 });
 
+test("a promise ahead of the team date is slack, not lateness", () => {
+  /* Real data hit this before any invented case did: somebody promised a day
+     earlier than they were asked for. A strip that only ever draws the team's
+     window renders that person identically to one scraping in on the day. */
+  const row = buildStrip(
+    [task({ promised_by_sim_time: "2026-08-11T17:00:00+10:00" })],
+    NOW,
+  ).rows[0];
+
+  assert.equal(row.late, false);
+  assert.equal(row.lateDays, 0);
+  assert.ok(
+    row.promised! < row.required!,
+    "the promise has a position of its own, ahead of the requirement",
+  );
+});
+
 test("a promise on the team date is not late", () => {
   const row = buildStrip([task()], NOW).rows[0];
 

@@ -23,7 +23,11 @@ ASSET_PREFIX = "/console"
 
 #: Page routes the bundle answers. Each serves index.html; the client decides
 #: what to render. Registered here so the server and the tests agree on one list.
-PAGE_ROUTES = ("/observatory", "/manage")
+#: `/diagnostics` is here because the Observatory shows everything it did --
+#: the gate results and the agent trace -- and more besides. Keeping the path
+#: alive rather than deleting it means old links and bookmarks still land
+#: somewhere correct.
+PAGE_ROUTES = ("/observatory", "/manage", "/tasks", "/diagnostics")
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",

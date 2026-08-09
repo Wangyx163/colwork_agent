@@ -12,11 +12,9 @@ from collab_agent.models import parse_time
 from collab_agent.result_processing import build_deterministic_report
 from collab_agent.service import CoordinationService
 from collab_agent.store import Database
-from collab_agent.web import (
-    WORKBENCH_HTML,
-    SingleInstanceHTTPServer,
-    workbench_state,
-)
+from collab_agent.web import SingleInstanceHTTPServer, workbench_state
+
+WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
 def extraction_payload() -> dict:
@@ -97,27 +95,32 @@ class ClaimFlowTests(unittest.TestCase):
             ).isoformat(),
         )
 
-    def test_workbench_updates_only_after_explicit_actions(self) -> None:
-        self.assertNotIn("setInterval", WORKBENCH_HTML)
-        self.assertNotIn("function claimTask", WORKBENCH_HTML)
-        self.assertNotIn('onclick="load(true)">手动刷新', WORKBENCH_HTML)
-        self.assertIn("renderAssignmentBell", WORKBENCH_HTML)
-        self.assertIn("timelineRow", WORKBENCH_HTML)
-        self.assertIn("prepareBallotDraft", WORKBENCH_HTML)
-        self.assertIn("localStorage.setItem('collabDrafts'", WORKBENCH_HTML)
-        self.assertIn("await load(true)", WORKBENCH_HTML)
-        self.assertIn("authRetry=true", WORKBENCH_HTML)
-        self.assertIn("await issueSession(actorSelect.value)", WORKBENCH_HTML)
-        self.assertNotIn("generateFinal", WORKBENCH_HTML)
-        self.assertIn("提交前请补充", WORKBENCH_HTML)
-        self.assertIn("最近一次提交未通过校验", WORKBENCH_HTML)
-        self.assertIn("协作记录", WORKBENCH_HTML)
-        self.assertIn("activityPanel(t)", WORKBENCH_HTML)
-        self.assertIn("已验收结果", WORKBENCH_HTML)
-        self.assertIn("系统正在主动读取正文与附件并整理终稿", WORKBENCH_HTML)
-        self.assertIn("等待自动重试", WORKBENCH_HTML)
-        self.assertIn("会议明确的默认协作者", WORKBENCH_HTML)
-        self.assertIn("协作方式：单人任务", WORKBENCH_HTML)
+    def test_the_participant_page_never_polls(self) -> None:
+        """Refreshing on a timer is not the same as reflecting an action.
+
+        A page that re-fetches on its own hides whether an action landed, and
+        on a simulated clock it also makes the audit trail look like the user
+        did something. State moves only after an action the person took. The
+        assertion followed the page from the server-rendered template into the
+        React sources rather than being dropped with it.
+        """
+
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (WEB_SRC.rglob("*.tsx"))
+        )
+
+        self.assertNotIn("setInterval", sources)
+        self.assertNotIn("setTimeout(load", sources)
+
+    def test_a_half_written_submission_survives_a_reload(self) -> None:
+        """The old page kept form drafts; losing that would be a regression."""
+
+        draft = (WEB_SRC / "tasks" / "useDraft.ts").read_text(encoding="utf-8")
+        card = (WEB_SRC / "tasks" / "MyTaskCard.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("localStorage", draft)
+        self.assertIn("useDraft", card)
 
     def test_workbench_port_allows_only_one_server_instance(self) -> None:
         first = SingleInstanceHTTPServer(

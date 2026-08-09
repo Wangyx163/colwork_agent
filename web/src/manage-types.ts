@@ -74,6 +74,43 @@ export interface AssistanceRequest {
   requested_sim_time?: string;
 }
 
+export interface Notice {
+  notice_id: string;
+  kind: string;
+  action_item_id: string;
+  title: string;
+  summary: string;
+  fields: { label: string; value: string }[];
+  sim_time: string;
+  /** True when the notice offers a decision, which the task list already
+   *  surfaces -- the bell uses this to avoid showing the same ask twice. */
+  decides: boolean;
+}
+
+export interface MyAssignment {
+  assignment_id: string;
+  assignment_role: "OWNER" | "COLLABORATOR";
+  response_status: string;
+  assignment_message?: string;
+  definition_version?: number;
+}
+
+export interface Contribution {
+  contribution_type: "BALLOT" | "VOTE";
+  actor_id: string;
+  status: string;
+  payload?: Record<string, unknown> | null;
+}
+
+export interface CollaborationProgress {
+  structure_type: string;
+  selection_count?: number;
+  dependencies_ready?: boolean;
+  contributions?: Contribution[];
+  options?: { option_id: string; text: string }[];
+  [key: string]: unknown;
+}
+
 export interface Task {
   action_item_id: string;
   title: string;
@@ -102,6 +139,18 @@ export interface Task {
   current_version: Version | null;
   accepted_task_result: Record<string, unknown> | null;
   latest_progress: Record<string, unknown> | null;
+  /* Present on the participant surface. */
+  my_assignment?: MyAssignment | null;
+  is_mine?: boolean;
+  is_collaborator?: boolean;
+  can_contribute?: boolean;
+  collaboration_progress?: CollaborationProgress | null;
+  last_owner_signal?: {
+    signal_type: string;
+    signal_at: string;
+    valid_until?: string;
+    note?: string;
+  } | null;
 }
 
 export interface Approval {
@@ -143,9 +192,23 @@ export interface Participant {
   roles?: string[];
 }
 
+/** Lists the pages must offer verbatim rather than repeat.
+ *
+ *  A return reason chosen here is read back from a Feishu card, and the domain
+ *  refuses any signal or category outside its own set -- so these travel from
+ *  the server instead of being written twice. */
+export interface Vocabulary {
+  return_reasons: string[];
+  other_return_reason: string;
+  quick_signals: string[];
+  assistance_categories: string[];
+}
+
 export interface ManageState {
   episode: Record<string, unknown> & { episode_id: string; title?: string };
+  vocabulary: Vocabulary;
   tasks: Task[];
+  notices: Notice[];
   pending_approvals: Approval[];
   /** Null until an episode has produced one -- a meeting still in flight has
    *  no final deliverable, and typing it non-null hides that from the caller. */

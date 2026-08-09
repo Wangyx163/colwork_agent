@@ -81,10 +81,10 @@ class RouteOwnershipTests(unittest.TestCase):
             self.assertTrue(serves(path), path)
             self.assertTrue(serves(f"{path}/app.js"), path)
 
-    def test_the_workbench_routes_are_left_alone(self) -> None:
-        """/tasks stays on the server-rendered page; claiming it would 404 it."""
+    def test_the_api_is_never_swallowed_by_the_page_routes(self) -> None:
+        """An API path caught here would answer JSON callers with HTML."""
 
-        for path in ("/", "/tasks", "/diagnostics", "/api/state"):
+        for path in ("/", "/api/state", "/api/session", "/api/observatory"):
             self.assertFalse(serves(path), path)
 
     def test_a_lookalike_prefix_is_not_claimed(self) -> None:

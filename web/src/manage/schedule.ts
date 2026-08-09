@@ -30,8 +30,26 @@ export interface Row {
 export interface Strip {
   rows: Row[];
   /** Day ticks across the window, as label + 0–1 position. */
-  ticks: { label: string; at: number }[];
+  ticks: { label: string; at: number; today: boolean }[];
   now: number | null;
+}
+
+/** Midnight *where the reader is*.
+ *
+ *  Flooring the epoch to a multiple of a day gives midnight UTC, which is some
+ *  other hour locally -- so the axis would step on the wrong boundary while
+ *  its labels named local dates, and the mark for now would land a few hours
+ *  off the tick it belongs to. */
+function startOfDay(value: number): number {
+  const instant = new Date(value);
+  instant.setHours(0, 0, 0, 0);
+  return instant.getTime();
+}
+
+function addDays(value: number, days: number): number {
+  const instant = new Date(value);
+  instant.setDate(instant.getDate() + days);
+  return instant.getTime();
 }
 
 function ms(value: string | null | undefined): number | null {
@@ -90,27 +108,30 @@ export function buildStrip(
 
   if (!prepared.length) return { rows: [], ticks: [], now: null };
 
-  let low = Math.min(...instants);
-  let high = Math.max(...instants);
-  low = Math.floor(low / DAY) * DAY;
-  high = Math.ceil(high / DAY) * DAY;
+  const low = startOfDay(Math.min(...instants));
+  let high = startOfDay(Math.max(...instants));
+  if (high <= Math.max(...instants)) high = addDays(high, 1);
   // Only ever widen to the right: pushing `low` earlier would move the
   // now-mark off the left edge for no reason, and that mark is the origin
   // every bar is read from.
-  if (high - low < minDays * DAY) high = low + minDays * DAY;
+  const floor = addDays(low, minDays);
+  if (high < floor) high = floor;
   const span = high - low || DAY;
   const at = (value: number) => (value - low) / span;
 
-  const ticks: { label: string; at: number }[] = [];
-  const days = Math.round(span / DAY);
+  const today = startOfDay(now);
+  const ticks: { label: string; at: number; today: boolean }[] = [];
+  const days = Math.round((high - low) / DAY);
   // Thin the labels rather than let them collide: past roughly a fortnight
   // every other midnight is enough to read the axis by.
   const step = days <= 14 ? 1 : Math.ceil(days / 12);
   for (let day = 0; day <= days; day += step) {
-    const instant = new Date(low + day * DAY);
+    const midnight = addDays(low, day);
+    const instant = new Date(midnight);
     ticks.push({
       label: `${instant.getMonth() + 1}/${String(instant.getDate()).padStart(2, "0")}`,
-      at: (day * DAY) / span,
+      at: at(midnight),
+      today: midnight === today,
     });
   }
 

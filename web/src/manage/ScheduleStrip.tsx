@@ -1,16 +1,20 @@
-import { describe, type Strip } from "./schedule";
+import { describe, type Row, type Strip } from "./schedule";
 
-const GRID = "grid-cols-[6.5rem_1fr] sm:grid-cols-[9.5rem_1fr]";
+const GRID = "grid-cols-[5.5rem_1fr] sm:grid-cols-[10rem_1fr]";
 
 /** The schedule strip.
  *
- *  Deliberately thin: 5px bars on a 20px track. A thicker bar would carry no
- *  more information -- the meaning is in where the marks sit relative to the
- *  team tick, not in how much ink each row uses.
+ *  The bar is the window the team allows: it opens at now and closes on the
+ *  day the team needs the work. What follows it, when a person has promised a
+ *  later date than that, is drawn rather than filled -- time nobody agreed to
+ *  should not look as solid as time somebody did -- and carries the overrun in
+ *  words at its end, because a reader should not have to measure a dashed
+ *  segment against a date axis to learn it is two days.
  *
- *  There is no legend. Every mark is either labelled in place (the person's
- *  name rides the bar) or explained by the card below it, and a legend would
- *  only be a second thing to read before the first one makes sense. */
+ *  Names ride inside their own bars. A separate column of people would align
+ *  neatly and say nothing about which row it belonged to; putting the label in
+ *  the bar costs no extra height, which is the whole reason the rows are one
+ *  line tall. */
 export function ScheduleStrip({
   strip,
   selected,
@@ -21,122 +25,167 @@ export function ScheduleStrip({
   onPick: (actionItemId: string) => void;
 }) {
   if (!strip.rows.length) return null;
+  const now = strip.now ?? 0;
 
   return (
-    <div className="relative mb-4 overflow-hidden rounded-md border border-rule-2">
-      <div className={`grid ${GRID} gap-3 border-b border-rule-2 bg-sunk px-3 pt-1.5 pb-1`}>
+    <div className="mb-4 overflow-hidden rounded-md border border-rule-2">
+      {/* Axis. The tick that would sit under the now-mark is dropped: the
+          mark is labelled itself, and two labels in one place read as one
+          smudged label. */}
+      <div className={`grid ${GRID} gap-2 border-b border-rule-2 bg-sunk px-3 pt-1 pb-0.5 sm:gap-3`}>
         <span />
-        <span className="relative h-4">
-          {strip.ticks.map((tick) => (
-            <span
-              key={tick.label + tick.at}
-              className="absolute top-0 -translate-x-1/2 font-mono text-[0.65rem] text-ink-3"
-              style={{ left: `${tick.at * 100}%` }}
-            >
-              {tick.label}
-            </span>
-          ))}
+        <span className="relative h-[1.1rem]">
+          {strip.ticks
+            .filter((tick) => !tick.today)
+            .map((tick) => (
+              <span
+                key={tick.label}
+                className="absolute top-0 -translate-x-1/2 font-mono text-[0.64rem] text-ink-3"
+                style={{ left: `${tick.at * 100}%` }}
+              >
+                {tick.label}
+              </span>
+            ))}
+          <span
+            className="absolute top-0 -translate-x-1/2 rounded-sm bg-series-b px-1 font-mono text-[0.64rem] text-white"
+            style={{ left: `${now * 100}%` }}
+          >
+            今天
+          </span>
         </span>
       </div>
 
-      {strip.rows.map((row) => {
-        const id = row.task.action_item_id;
-        const current = selected === id;
-        const end = row.promised ?? row.required ?? row.start;
-        // The stretch beyond what the team asked for is drawn, not filled:
-        // it is time that has not been agreed to, so it should not read as
-        // solid as the part that has.
-        const split = row.late && row.required !== null ? row.required : end;
-
-        return (
-          <button
-            key={id}
-            onClick={() => onPick(id)}
-            aria-current={current}
-            title={describe(row.task)}
-            className={`grid w-full ${GRID} items-center gap-3 border-b border-rule-2 px-3 py-2 text-left last:border-b-0 hover:bg-sunk focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
-              current ? "bg-accent-wash shadow-[inset_3px_0_0] shadow-accent" : ""
-            }`}
-          >
-            <span className="truncate text-[0.79rem]">{row.task.title}</span>
-
-            <span className="relative h-[26px]">
-              <span className="absolute top-[17px] right-0 left-0 h-px bg-rule-2" />
-
-              {/* The name rides its own bar, so a reader never has to match a
-                  row back to a separate column of people. */}
-              <span
-                className="absolute top-0 max-w-[40%] truncate font-mono text-[0.66rem] text-ink-3"
-                style={{ left: `${row.start * 100}%` }}
-              >
-                {row.owner}
-              </span>
-
-              {row.ghosts.map((ghost, index) => (
-                <span
-                  key={index}
-                  aria-hidden
-                  className="absolute top-[16px] h-[3px] rounded-sm text-ink-3 opacity-45"
-                  style={{
-                    left: `${Math.min(row.start, ghost) * 100}%`,
-                    width: `${Math.abs(ghost - row.start) * 100}%`,
-                    background:
-                      "repeating-linear-gradient(90deg,currentColor 0 3px,transparent 3px 6px)",
-                  }}
-                />
-              ))}
-
-              <span
-                className={`absolute top-[15px] h-[5px] rounded-sm ${
-                  row.done ? "bg-ok" : row.overdue ? "bg-bad" : "bg-accent"
-                }`}
-                style={{
-                  left: `${row.start * 100}%`,
-                  width: `${Math.max(0, split - row.start) * 100}%`,
-                }}
-              />
-              {row.late ? (
-                <span
-                  className="absolute top-[15px] h-[5px] rounded-r-sm text-warn"
-                  style={{
-                    left: `${split * 100}%`,
-                    width: `${Math.max(0, end - split) * 100}%`,
-                    background:
-                      "repeating-linear-gradient(90deg,currentColor 0 4px,transparent 4px 7px)",
-                  }}
-                />
-              ) : null}
-
-              {row.required !== null ? (
-                <span
-                  className="absolute top-[11px] bottom-0 w-[2px] rounded-sm bg-ink-2"
-                  style={{ left: `${row.required * 100}%` }}
-                  title="团队要求交付"
-                />
-              ) : null}
-            </span>
-          </button>
-        );
-      })}
-
-      {/* One mark for the whole strip rather than a repeat on every row: it is
-          the same instant for everybody, and every bar is measured from it.
-          Laid over the same grid so it stays aligned with the tracks without
-          hard-coding the column width twice. */}
-      {strip.now !== null ? (
+      {/* The rows, with the now-mark laid over just them: it belongs against
+          the bars, not through the axis labels or the border below. */}
+      <div className="relative">
+        {strip.rows.map((row) => (
+          <StripRow
+            key={row.task.action_item_id}
+            row={row}
+            selected={selected === row.task.action_item_id}
+            onPick={onPick}
+          />
+        ))}
         <div
           aria-hidden
-          className={`pointer-events-none absolute inset-0 grid ${GRID} gap-3 px-3`}
+          className={`pointer-events-none absolute inset-0 grid ${GRID} gap-2 px-3 sm:gap-3`}
         >
           <span />
           <span className="relative">
             <span
-              className="absolute top-0 bottom-0 w-[2px] -translate-x-px bg-series-b opacity-70"
-              style={{ left: `${strip.now * 100}%` }}
+              className="absolute top-0 bottom-0 w-px bg-series-b opacity-45"
+              style={{ left: `${now * 100}%` }}
             />
           </span>
         </div>
-      ) : null}
+      </div>
     </div>
+  );
+}
+
+/** Below this fraction of the window a bar is too short to hold a name, so
+ *  the name goes after it instead of being clipped inside it. */
+const NAME_FITS = 0.22;
+
+function StripRow({
+  row,
+  selected,
+  onPick,
+}: {
+  row: Row;
+  selected: boolean;
+  onPick: (actionItemId: string) => void;
+}) {
+  const allowed = row.required ?? row.promised ?? row.start;
+  const end = row.promised ?? allowed;
+  const width = Math.max(0, allowed - row.start);
+  const inside = width >= NAME_FITS;
+
+  return (
+    <button
+      onClick={() => onPick(row.task.action_item_id)}
+      aria-current={selected}
+      title={describe(row.task)}
+      className={`grid w-full ${GRID} items-center gap-2 border-b border-rule-2 px-3 py-[3px] text-left last:border-b-0 hover:bg-sunk focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent sm:gap-3 ${
+        selected ? "bg-accent-wash shadow-[inset_3px_0_0] shadow-accent" : ""
+      }`}
+    >
+      <span className="truncate text-[0.78rem]">{row.task.title}</span>
+
+      <span className="relative h-[1.35rem]">
+        <span className="absolute top-1/2 right-0 left-0 h-px -translate-y-1/2 bg-rule-2" />
+
+        {/* Where the promise used to sit before it was moved.
+            A mark, not a segment: "the date used to be here" is a point, and
+            drawing it as a range made it vanish whenever the old promise
+            happened to land on the team's own date -- which is precisely the
+            common case, since people first agree to the date they were asked
+            for and move it afterwards. Sits above the bar so it never hides
+            under the team cap. */}
+        {row.ghosts.map((ghost, index) => (
+          <span
+            key={index}
+            title="改期前的承诺"
+            className="absolute top-0 h-[5px] w-[2px] -translate-x-px rounded-full bg-ink-3 opacity-55"
+            style={{ left: `${ghost * 100}%` }}
+          />
+        ))}
+
+        {/* The window the team allows. */}
+        <span
+          className={`absolute top-1/2 flex h-[13px] -translate-y-1/2 items-center overflow-hidden rounded-[3px] ${
+            row.done
+              ? "bg-ok/85"
+              : row.overdue
+                ? "bg-bad/85"
+                : "bg-accent/85"
+          }`}
+          style={{ left: `${row.start * 100}%`, width: `${width * 100}%` }}
+        >
+          {inside ? (
+            <span className="truncate px-1.5 text-[0.66rem] leading-none font-medium text-white">
+              {row.owner}
+            </span>
+          ) : null}
+        </span>
+
+        {/* The day the team needs it: the bar's closing edge, drawn as a cap
+            so it survives being right next to the overrun. */}
+        {row.required !== null ? (
+          <span
+            className="absolute top-1/2 h-[17px] w-[2px] -translate-x-px -translate-y-1/2 rounded-full bg-ink"
+            style={{ left: `${row.required * 100}%` }}
+          />
+        ) : null}
+
+        {/* Time promised beyond that. */}
+        {row.late ? (
+          <span
+            className="absolute top-1/2 h-[3px] -translate-y-1/2 text-warn"
+            style={{
+              left: `${allowed * 100}%`,
+              width: `${Math.max(0, end - allowed) * 100}%`,
+              background:
+                "repeating-linear-gradient(90deg,currentColor 0 3px,transparent 3px 6px)",
+            }}
+          />
+        ) : null}
+
+        {/* One trailing label rather than two competing for the same spot:
+            how much the overrun is, and the name when the bar was too short
+            to hold it. */}
+        {row.late || !inside ? (
+          <span
+            className="absolute top-1/2 flex -translate-y-1/2 gap-1.5 pl-1.5 font-mono text-[0.64rem] whitespace-nowrap"
+            style={{ left: `${end * 100}%` }}
+          >
+            {row.late ? (
+              <b className="font-medium text-warn">晚 {row.lateDays} 天</b>
+            ) : null}
+            {!inside ? <span className="text-ink-3">{row.owner}</span> : null}
+          </span>
+        ) : null}
+      </span>
+    </button>
   );
 }

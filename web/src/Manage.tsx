@@ -173,7 +173,7 @@ export default function ManagePage() {
         pendingLabel={
           conflicts ? `${conflicts} 项工期冲突` : `${inFlight.length} 项执行中`
         }
-        why="竖线是现在，每根条从这里往右量剩下的时间。竖刻度是团队要求交付的那天，虚线段是本人承诺超出它的部分。点任一条，下面对应的卡片会高亮。"
+        why="每根条是团队留给这件事的时间，右端那道竖杠是团队要求交付的那天。虚线是本人承诺比它还晚的部分。点任一条，下面对应的卡片会高亮。"
       >
         <ScheduleStrip strip={strip} selected={selected} onPick={pick} />
         {inFlight.length ? (

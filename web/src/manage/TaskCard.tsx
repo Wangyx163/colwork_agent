@@ -362,11 +362,11 @@ export function TaskCard({
     <article
       ref={cardRef}
       onClick={onSelect}
-      className={`rounded-md border bg-raise px-3.5 py-3 ${
+      className={`rounded-md border bg-raise px-3.5 py-3 transition-shadow ${
         selected
           ? "border-accent ring-2 ring-accent-wash"
-          : "border-rule-2"
-      }`}
+          : "border-rule-2 hover:border-rule"
+      } ${onSelect ? "cursor-pointer" : ""}`}
     >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="text-[0.9rem] font-semibold">{task.title}</span>
@@ -388,14 +388,24 @@ export function TaskCard({
         ) : null}
       </div>
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+      {/* No phantom row when there is nothing to do: a reader looking at
+          somebody else's task should see the card end, not an empty ledge
+          where a control seems to have failed to render. */}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${
+          actions.length ? "mt-2.5" : "mt-1"
+        }`}
+      >
         {actions.map((action) => (
           <Button key={action.label} tone={action.tone} onClick={action.run}>
             {action.label}
           </Button>
         ))}
         <button
-          onClick={() => setOpen((value) => !value)}
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          }}
           aria-expanded={open}
           className="ml-auto rounded px-1 py-0.5 text-[0.76rem] text-ink-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
         >

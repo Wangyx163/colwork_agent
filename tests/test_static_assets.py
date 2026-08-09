@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from collab_agent.static_assets import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WEB = ROOT / "web"
 
 
 class BundleShippedTests(unittest.TestCase):
@@ -55,6 +58,51 @@ class BundleShippedTests(unittest.TestCase):
 
         self.assertIn(f'src="{ASSET_PREFIX}/app.js"', markup)
         self.assertIn(f'href="{ASSET_PREFIX}/app.css"', markup)
+
+    def test_the_bundle_was_built_from_the_committed_sources(self) -> None:
+        """Committed build output drifts, and the drift is invisible.
+
+        Edit a source, forget to rebuild, commit: the diff shows the change and
+        the page keeps serving the previous UI. The cost lands on whoever opens
+        the page next, who sees the old screen and concludes the work was never
+        done -- which is exactly what happened.
+
+        `npm run build` stamps the bundle with a hash of what it was built
+        from; this recomputes it. No Node required, so CI keeps its pure-Python
+        job.
+        """
+
+        manifest_path = BUNDLE_ROOT / "build-manifest.json"
+        self.assertTrue(
+            manifest_path.is_file(),
+            "no build stamp: rebuild with `npm run build` in web/",
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        digest = hashlib.sha256()
+        # Sorted on the relative posix path as plain strings. Sorting Path
+        # objects is case-insensitive on Windows and case-sensitive elsewhere,
+        # which would hash the same files in a different order than the build.
+        files = sorted(
+            path.relative_to(WEB).as_posix()
+            for root in ("src", "index.html", "vite.config.ts", "tsconfig.app.json")
+            for path in (
+                (WEB / root).rglob("*") if (WEB / root).is_dir() else [WEB / root]
+            )
+            if path.is_file() and not path.name.endswith(".test.ts")
+        )
+        for name in files:
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update((WEB / name).read_bytes())
+            digest.update(b"\0")
+
+        self.assertEqual(len(files), manifest["file_count"])
+        self.assertEqual(
+            digest.hexdigest(),
+            manifest["source_sha256"],
+            "web/ has changed since the bundle was built -- run `npm run build`",
+        )
 
     def test_the_bundle_is_not_gitignored(self) -> None:
         # Comments are stripped first: .gitignore explains *why* the bundle is

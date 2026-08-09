@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/stamp-build.mjs",
     "lint": "oxlint",
     "test": "node --test \"src/**/*.test.ts\"",
     "preview": "vite preview"

@@ -239,20 +239,39 @@ function DeliveryDetail({ task }: { task: Task }) {
           <span>整理 {version.processing_status}</span>
         ) : null}
       </div>
+      {/* A real delivery often puts everything in the summary and a link, and
+          leaves `content` empty. Rendering an empty box labelled "正文为空"
+          above the actual substance reported a complete submission as a blank
+          one, so the body is whichever of these was actually filled in. */}
       {payload.summary ? (
         <p className="mb-2 text-[0.84rem] font-semibold">{payload.summary}</p>
       ) : null}
-      <p className="max-h-56 overflow-y-auto rounded border border-rule-2 bg-ground px-3 py-2 text-[0.82rem] whitespace-pre-wrap">
-        {payload.content || "（正文为空）"}
-      </p>
+      {payload.content ? (
+        <p className="max-h-56 overflow-y-auto rounded border border-rule-2 bg-ground px-3 py-2 text-[0.82rem] whitespace-pre-wrap">
+          {payload.content}
+        </p>
+      ) : null}
+      {payload.completion_note ? (
+        <p className="mt-1 text-[0.8rem] text-ink-2">
+          {payload.completion_note}
+        </p>
+      ) : null}
+      {!payload.summary && !payload.content && !payload.completion_note ? (
+        <p className="text-[0.8rem] text-ink-3">（这一版没有正文）</p>
+      ) : null}
       {links.length || attachments.length ? (
         <ul className="mt-2 flex flex-wrap gap-2">
           {links.map((link, index) => (
-            <li
-              key={`link-${index}`}
-              className="rounded border border-rule-2 px-2 py-0.5 font-mono text-[0.7rem] text-ink-2"
-            >
-              🔗 {link}
+            <li key={`link-${index}`}>
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                title={link}
+                className="inline-block max-w-[22rem] truncate rounded border border-rule-2 px-2 py-0.5 font-mono text-[0.7rem] text-accent underline"
+              >
+                🔗 {link}
+              </a>
             </li>
           ))}
           {attachments.map((file, index) => (

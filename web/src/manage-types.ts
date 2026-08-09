@@ -42,6 +42,10 @@ export interface Version {
     content?: string;
     links?: string[];
     files?: { name?: string }[];
+    /** What the submitter said about finishing. Real deliveries often carry
+     *  this and an empty `content`, so a card that only reads `content`
+     *  reports an empty submission for a complete one. */
+    completion_note?: string;
   } | null;
   validation_status?: string;
   review_status?: string;

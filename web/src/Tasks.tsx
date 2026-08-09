@@ -154,7 +154,7 @@ export default function TasksPage() {
         name="进行中"
         pending={live.length}
         pendingLabel={
-          history ? `已完成 ${done.length} 项` : `${live.length} 项进行中`
+          history ? `已验收 ${done.length} 项` : `${live.length} 项进行中`
         }
         why="派发要你回应、进展要你报、做完了在这里提交。每张卡片只留跟当前状态有关的动作。"
       >
@@ -172,7 +172,7 @@ export default function TasksPage() {
               ))}
             </div>
           ) : (
-            <Blank>还没有完成的任务。</Blank>
+            <Blank>还没有验收通过的任务。</Blank>
           )
         ) : live.length ? (
           <div className="grid gap-2">
@@ -197,7 +197,7 @@ export default function TasksPage() {
             onClick={() => setHistory((open) => !open)}
             className="font-mono text-[0.75rem] text-ink-3 underline hover:text-ink"
           >
-            {history ? "← 返回进行中" : `🕐 看已完成 ${done.length} 项`}
+            {history ? "← 返回进行中" : `🕐 已验收 ${done.length} 项`}
           </button>
         </div>
       </Zone>

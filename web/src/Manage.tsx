@@ -7,12 +7,12 @@ import { StructurePanel } from "./manage/StructurePanel";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
 
-const IN_FLIGHT = new Set(["TRACKING", "BLOCKED"]);
-const AWAITING_DISPATCH = new Set([
-  "PENDING_CONFIRMATION",
-  "PENDING_ASSIGNMENT",
-  "NEEDS_REVISION",
-]);
+// PENDING_ASSIGNMENT means dispatched and waiting for the people named on it
+// to accept -- not waiting to be dispatched. Filing it under 派发 put a
+// "复核并派发" button on tasks that already had one, and the domain refused
+// every click: only a draft or a returned task may be dispatched.
+const IN_FLIGHT = new Set(["TRACKING", "BLOCKED", "PENDING_ASSIGNMENT"]);
+const AWAITING_DISPATCH = new Set(["PENDING_CONFIRMATION", "NEEDS_REVISION"]);
 const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
 
 export default function ManagePage() {

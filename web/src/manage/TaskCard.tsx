@@ -62,7 +62,7 @@ export function Button({
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING_CONFIRMATION: "待确认",
-  PENDING_ASSIGNMENT: "待派发",
+  PENDING_ASSIGNMENT: "等接受",
   NEEDS_REVISION: "被退回",
   TRACKING: "执行中",
   BLOCKED: "受阻",
@@ -75,6 +75,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function statusTone(status: string): "plain" | "live" | "warn" | "ok" | "bad" {
   if (status === "TRACKING") return "live";
+  if (status === "PENDING_ASSIGNMENT") return "plain";
   if (status === "PENDING_ACCEPTANCE") return "ok";
   if (status === "BLOCKED" || status === "NEEDS_REVISION") return "warn";
   if (["ACCEPTED", "AGGREGATED", "ARCHIVED"].includes(status)) return "ok";
@@ -91,7 +92,8 @@ function disclosureLabel(task: Task): string {
   if (task.status === "PENDING_ACCEPTANCE") return "看正文与附件";
   if (task.status === "TRACKING" || task.status === "BLOCKED")
     return "看执行过程";
-  if (["PENDING_ASSIGNMENT", "NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(task.status))
+  if (task.status === "PENDING_ASSIGNMENT") return "看谁还没接受";
+  if (["NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(task.status))
     return "看抽取依据";
   return "看验收内容";
 }
@@ -296,6 +298,42 @@ function DeliveryDetail({ task }: { task: Task }) {
   );
 }
 
+/** Dispatched, waiting. The only question about this task is who has not
+ *  answered yet, so that is the whole panel. */
+function AwaitingDetail({ task }: { task: Task }) {
+  const assignments = task.current_assignments?.length
+    ? task.current_assignments
+    : task.assignments || [];
+  if (!assignments.length)
+    return <Empty>还没有派发记录。</Empty>;
+  return (
+    <ul>
+      {assignments.map((assignment) => {
+        const answered = assignment.response_status !== "PENDING";
+        return (
+          <li
+            key={assignment.assignment_id}
+            className="flex items-center gap-2 py-1 text-[0.8rem]"
+          >
+            <span
+              className={`size-[0.45rem] rounded-full ${
+                answered ? "bg-ok" : "bg-warn"
+              }`}
+            />
+            <span>{assignment.display_name || assignment.actor_id}</span>
+            <span className="font-mono text-[0.7rem] text-ink-3">
+              {assignment.assignment_role === "OWNER" ? "主负责人" : "协作者"}
+            </span>
+            <span className="ml-auto font-mono text-[0.7rem] text-ink-3">
+              {answered ? "已回应" : "等回应"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Provenance: where this task came from, so a dispatch is not a guess. */
 function ProvenanceDetail({ task }: { task: Task }) {
   const meta = (task.proposal_metadata || {}) as Record<string, string>;
@@ -384,10 +422,10 @@ export function TaskCard({
   if (task.status === "PENDING_ACCEPTANCE") detail = <DeliveryDetail task={task} />;
   else if (task.status === "TRACKING" || task.status === "BLOCKED")
     detail = <ExecutionDetail task={task} />;
+  else if (task.status === "PENDING_ASSIGNMENT")
+    detail = <AwaitingDetail task={task} />;
   else if (
-    ["PENDING_ASSIGNMENT", "NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(
-      task.status,
-    )
+    ["NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(task.status)
   )
     detail = <ProvenanceDetail task={task} />;
   else detail = <OutcomeDetail task={task} />;

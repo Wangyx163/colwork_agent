@@ -59,13 +59,18 @@ export interface Version {
   processing_status?: string;
 }
 
+/** Field names taken from a real payload. An assignment carries
+ *  `assignment_role` / `response_status` / `display_name`, not the `role` /
+ *  `status` / `assignee_*` that seem natural -- declaring the natural ones
+ *  typechecks and then renders blanks. */
 export interface Assignment {
   assignment_id: string;
-  action_item_id: string;
-  assignee_actor_id: string;
-  assignee_display_name?: string;
-  role?: string;
-  status: string;
+  action_item_id?: string;
+  actor_id?: string;
+  display_name?: string;
+  assignment_role?: "OWNER" | "COLLABORATOR";
+  response_status: string;
+  response_message?: string;
   definition_version?: number;
 }
 

@@ -24,12 +24,15 @@ export function unanswered(
   memories: MemoryRow[],
   me: string,
 ): LexiconTopic[] {
+  // Answered means a standing answer, so CONFIRMED and nothing else. Treating
+  // "not rejected" as answered counted withdrawn and superseded entries too,
+  // which left somebody who had taken an entry down unable to be asked again.
   const answered = new Set(
     memories
       .filter(
         (memory) =>
           memory.actor_id === me &&
-          memory.status !== "REJECTED" &&
+          memory.status === "CONFIRMED" &&
           memory.value?.code,
       )
       .map((memory) => memory.topic),

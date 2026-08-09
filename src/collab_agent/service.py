@@ -5100,7 +5100,7 @@ class CoordinationService:
         replacement_code = (replacement_code or corrected_value).strip().upper()
         if action == "CORRECT":
             action = "REPLACE"
-        if action not in {"CONFIRM", "REPLACE", "REJECT"}:
+        if action not in {"CONFIRM", "REPLACE", "REJECT", "WITHDRAW"}:
             raise ValueError("unsupported memory action")
         if action == "REPLACE" and not replacement_code:
             raise ValueError("replacement memory code is required")
@@ -5151,7 +5151,24 @@ class CoordinationService:
                 raise KeyError(memory_id)
             if memory["actor_id"] != actor_id:
                 raise PermissionError("private collaboration memory belongs to another actor")
-            if action == "REJECT":
+            if action == "WITHDRAW":
+                # Taking an entry back down without putting another up.
+                # Declaring again would supersede it, but that forces a person
+                # to state something in order to stop stating something, and
+                # "I would rather this were not shown" is its own answer. A
+                # withdrawn entry stops reaching colleagues and becomes
+                # unanswered again, so the questionnaire can ask once more.
+                if memory["status"] != "CONFIRMED":
+                    raise ValueError("only a confirmed memory may be withdrawn")
+                cursor.execute(
+                    "UPDATE collaboration_memories SET status = 'SUPERSEDED' "
+                    "WHERE memory_id = ?",
+                    (memory_id,),
+                )
+                resulting_id = memory_id
+                status = "SUPERSEDED"
+                event_type = "CollaborationMemoryWithdrawn"
+            elif action == "REJECT":
                 if memory["status"] != "PRIVATE_DRAFT":
                     raise ValueError("only a draft memory may be rejected")
                 cursor.execute(

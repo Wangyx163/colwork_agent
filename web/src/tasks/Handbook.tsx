@@ -129,11 +129,30 @@ export function Handbook({
               className="flex items-start gap-2 rounded border border-rule-2 px-3 py-2 text-[0.82rem]"
             >
               <span className="mt-[0.42rem] size-[0.45rem] shrink-0 rounded-full bg-ok" />
-              <span>
+              <span className="min-w-0 flex-1">
                 {memory.value?.collaborator_hint ||
                   memory.value?.statement ||
                   memory.topic}
               </span>
+              {/* Anything shown to colleagues has to be removable by the
+                  person it describes, or "you have the final say" is only a
+                  slogan. Re-answering supersedes; this is for when the honest
+                  answer is that it should not be up at all. */}
+              <button
+                onClick={() =>
+                  void act(
+                    () =>
+                      postJson(
+                        `/api/memories/${memory.memory_id}/withdraw`,
+                        { message_id: messageId("memory") },
+                      ),
+                    "已撤下，同事看不到了；想重新填可以再答一次",
+                  )
+                }
+                className="shrink-0 font-mono text-[0.72rem] text-ink-3 underline hover:text-bad focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                撤下
+              </button>
             </li>
           ))}
         </ul>

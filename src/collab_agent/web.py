@@ -1468,7 +1468,7 @@ def serve_dashboard(
     final_generate_path = re.compile(r"^/api/final/generate$")
     memory_declare_path = re.compile(r"^/api/memories/declare$")
     memory_path = re.compile(
-        r"^/api/memories/([^/]+)/(confirm|replace|reject)$"
+        r"^/api/memories/([^/]+)/(confirm|replace|reject|withdraw)$"
     )
     artifact_review_path = re.compile(r"^/api/artifact-versions/([^/]+)/review$")
     artifact_contribution_path = re.compile(

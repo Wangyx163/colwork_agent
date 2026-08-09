@@ -104,6 +104,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="use DATABASE_URL from .env.local instead of SQLite",
     )
+    meeting.add_argument(
+        "--feishu",
+        action="store_true",
+        help=(
+            "also open the Feishu connection in this process: cards go out, "
+            "clicks come back, and the workbench serves the same episode"
+        ),
+    )
+    meeting.add_argument("--dispatch-seconds", type=float, default=2.0)
     agent = subparsers.add_parser(
         "agent-meeting",
         help="run the durable Agent Worker for one imported meeting",
@@ -406,6 +415,84 @@ def _load_meeting_from_args(args: argparse.Namespace) -> tuple[Database, Coordin
     )
     _catch_clock_up(service)
     return database, service
+
+
+def _start_feishu_side(
+    service: CoordinationService,
+    im: object,
+    config: object,
+    *,
+    dispatch_seconds: float,
+    stop: "threading.Event",
+) -> "Callable[[], None]":
+    """Run the Feishu listener and dispatcher beside something else.
+
+    Extracted so one process can serve the workbench and Feishu at once. They
+    were separate commands for no better reason than a CLI habit of one command
+    per job, and separating them makes a demo juggle two terminals to show one
+    system. Nothing in the domain wanted them apart: the Outbox claim is a
+    conditional update checked by rowcount, so two dispatchers racing for an
+    entry produce one send and one no-op, not two cards.
+
+    Returns the blocking call that opens the connection, so the caller decides
+    which of the two runs on the main thread.
+    """
+
+    import threading  # noqa: PLC0415 - local so the import graph stays flat
+
+    from .feishu_app import FeishuApp, flushing_log, real_now  # noqa: PLC0415
+    from .feishu_commands import AssignmentBridge  # noqa: PLC0415
+    from .feishu_config import FeishuConfig  # noqa: PLC0415
+    from .feishu_notifier import AssignmentNotifier  # noqa: PLC0415
+
+    bridge = AssignmentBridge(service, log=flushing_log)
+    notifier = AssignmentNotifier(service, im, log=flushing_log)
+    app = FeishuApp(
+        config or FeishuConfig(app_id="dry-run", app_secret="dry-run"),
+        im,
+        episode_id=service.episode_id,
+        on_action=lambda record: bridge.handle(record),
+    )
+    session_id = f"feishu_dispatch_{real_now()}"
+
+    def dispatch_loop() -> None:
+        """Push pending assignments and drain the Outbox, on this thread.
+
+        Two sources, because the domain has two: assignment responses are
+        pull-based and need projecting into cards, while reminders and
+        approvals really do arrive through the Outbox.
+        """
+
+        service.recover_dispatcher(session_id)
+        while not stop.wait(dispatch_seconds):
+            try:
+                outcome = notifier.notify_once()
+                for skip in outcome["skipped"]:
+                    if not skip["first_report"]:
+                        continue
+                    # Said once, and said as the blocker it is: the task cannot
+                    # leave PENDING_ASSIGNMENT until every assignee responds,
+                    # so an unbound one stalls it.
+                    flushing_log(
+                        f"[feishu] {skip['display_name']} 尚未绑定飞书，"
+                        "卡片发不出去；该任务会一直停在待响应。"
+                        f"绑定：feishu-bind --actor \"{skip['display_name']}\" "
+                        "--open-id ou_xxx"
+                    )
+                delivered = service.dispatch_all(session_id=session_id)
+                if delivered:
+                    flushing_log(f"[feishu] dispatched {delivered} outbox entries")
+            except Exception as error:  # noqa: BLE001 - loop must survive
+                flushing_log(f"[feishu] dispatch failed: {error!r}")
+
+    threading.Thread(
+        target=dispatch_loop, name="feishu-dispatch", daemon=True
+    ).start()
+    flushing_log(
+        f"[feishu] serving episode {service.episode_id}; "
+        f"bindings={len(im.bindings())}"  # type: ignore[attr-defined]
+    )
+    return app.run
 
 
 def _catch_clock_up(service: CoordinationService) -> None:
@@ -849,63 +936,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 im=im,
             )
             _catch_clock_up(service)
-            bridge = AssignmentBridge(service, log=flushing_log)
-            notifier = AssignmentNotifier(service, im, log=flushing_log)
-            app = FeishuApp(
-                config or FeishuConfig(app_id="dry-run", app_secret="dry-run"),
+            run_connection = _start_feishu_side(
+                service,
                 im,
-                episode_id=service.episode_id,
-                on_action=lambda record: bridge.handle(record),
-            )
-
-            session_id = f"feishu_dispatch_{real_now()}"
-
-            def dispatch_loop() -> None:
-                """Push pending assignments and drain the Outbox, on this thread.
-
-                Two sources, because the domain has two: assignment responses
-                are pull-based and need projecting into cards, while reminders
-                and approvals really do arrive through the Outbox.
-                """
-
-                service.recover_dispatcher(session_id)
-                while not stop.wait(args.dispatch_seconds):
-                    try:
-                        outcome = notifier.notify_once()
-                        for skip in outcome["skipped"]:
-                            if not skip["first_report"]:
-                                continue
-                            # Said once, and said as the blocker it is: the
-                            # task cannot leave PENDING_ASSIGNMENT until every
-                            # assignee responds, so an unbound one stalls it.
-                            flushing_log(
-                                f"[feishu] {skip['display_name']} 尚未绑定飞书，"
-                                "卡片发不出去；该任务会一直停在待响应。"
-                                f"绑定：feishu-bind --actor \"{skip['display_name']}\" "
-                                "--open-id ou_xxx"
-                            )
-                        delivered = service.dispatch_all(session_id=session_id)
-                        if delivered:
-                            flushing_log(
-                                f"[feishu] dispatched {delivered} outbox entries"
-                            )
-                    except Exception as error:  # noqa: BLE001 - loop must survive
-                        flushing_log(f"[feishu] dispatch failed: {error!r}")
-
-            dispatcher = threading.Thread(
-                target=dispatch_loop, name="feishu-dispatch", daemon=True
-            )
-            dispatcher.start()
-            flushing_log(
-                f"[feishu] serving episode {service.episode_id}; "
-                f"bindings={len(im.bindings())}"
+                config,
+                dispatch_seconds=args.dispatch_seconds,
+                stop=stop,
             )
             if args.dry_run:
                 flushing_log("[feishu] dry run: not opening a connection")
                 stop.set()
-                dispatcher.join(timeout=5)
                 return 0
-            app.run()
+            run_connection()
             return 0
         except KeyboardInterrupt:
             return 0
@@ -935,10 +977,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     if args.command == "serve-meeting":
-        database, service = _load_meeting_from_args(args)
+        import threading
+
+        stop = threading.Event()
+        if args.feishu:
+            # One process, both surfaces. The Feishu connection blocks, so it
+            # runs on a thread and the HTTP server keeps the main one; the
+            # database is opened per thread for the same reason the Feishu
+            # command always did it -- SQLite connections belong to one thread.
+            from .thread_local_store import ThreadLocalDatabase
+
+            factory = _database_factory(args, allow_cross_thread=True)
+            bootstrap = factory()
+            bootstrap.initialize()
+            bootstrap.close()
+            database = ThreadLocalDatabase(factory)
+            config, im = _build_feishu_im(database, dry_run=False)
+            service = load_meeting_service(
+                database,
+                extraction_path=args.extraction,
+                transcript_path=args.transcript,
+                organization_name=args.organization,
+                coordinator_name=args.coordinator,
+                participant_names=args.participant,
+                im=im,
+            )
+            _catch_clock_up(service)
+            run_connection = _start_feishu_side(
+                service,
+                im,
+                config,
+                dispatch_seconds=args.dispatch_seconds,
+                stop=stop,
+            )
+            threading.Thread(
+                target=run_connection, name="feishu-connection", daemon=True
+            ).start()
+        else:
+            database, service = _load_meeting_from_args(args)
         print(
             f"Meeting collaboration workbench: http://{args.host}:{args.port} "
             f"({service.episode_id})"
+            + ("  + Feishu" if args.feishu else "")
         )
         try:
             serve_dashboard(
@@ -947,7 +1027,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 port=args.port,
                 result_processing_mode=args.result_processing,
             )
+        except KeyboardInterrupt:
+            pass
         finally:
+            stop.set()
             database.close()
         return 0
     if args.command == "agent-meeting":

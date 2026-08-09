@@ -214,3 +214,136 @@ class SelfDeclaredMemoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WithdrawTests(unittest.TestCase):
+    """Anything shown to colleagues must be removable by its subject.
+
+    Re-declaring supersedes an entry, but that forces somebody to state
+    something in order to stop stating something. "I would rather this were
+    not shown" is its own answer, and without it a wrong entry -- or one
+    written by a script that had no business writing it -- stays in front of
+    colleagues forever.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        extraction = root / "extraction.json"
+        transcript = root / "transcript.txt"
+        extraction.write_text(
+            json.dumps(
+                {
+                    "provider": "fixture",
+                    "model": "deterministic",
+                    "input_sha256": "e" * 64,
+                    "action_items": [
+                        {
+                            "title": "整理会议纪要",
+                            "deliverable": "会议纪要",
+                            "owner_name": None,
+                            "deadline_text": None,
+                            "deadline_iso": None,
+                            "source_timestamp": "00:01:00",
+                            "source_quote": "请整理会议纪要",
+                            "confidence": 0.9,
+                            "needs_confirmation": True,
+                            "uncertainties": [],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        transcript.write_text("主持人(00:01:00): 请整理会议纪要\n", encoding="utf-8")
+        self.db = Database(":memory:")
+        self.addCleanup(self.db.close)
+        self.db.initialize()
+        self.service = load_meeting_service(
+            self.db,
+            extraction_path=extraction,
+            transcript_path=transcript,
+            organization_name="撤下测试团队",
+            coordinator_name="会议负责人",
+            participant_names=["同事甲"],
+        )
+        self.actor = dict(
+            self.db.one(
+                "SELECT a.actor_id FROM actors a JOIN episode_participants ep "
+                "ON ep.actor_id = a.actor_id WHERE ep.episode_id = ? "
+                "AND ep.role = 'PARTICIPANT'",
+                (self.service.episode_id,),
+            )
+        )["actor_id"]
+        self.declared = self.service.declare_collaboration_memory(
+            actor_id=self.actor,
+            topic="SYNC_PREFERENCE",
+            code="ASYNC_TEXT",
+            message_id="declare-for-withdraw",
+        )
+
+    def withdraw(self, message_id: str = "withdraw-1") -> dict:
+        return self.service.decide_collaboration_memory(
+            self.declared["memory_id"],
+            actor_id=self.actor,
+            action="WITHDRAW",
+            message_id=message_id,
+        )
+
+    def test_withdrawing_stops_it_reaching_anybody(self) -> None:
+        self.assertEqual(self.withdraw()["status"], "SUPERSEDED")
+
+        row = dict(
+            self.db.one(
+                "SELECT status FROM collaboration_memories WHERE memory_id = ?",
+                (self.declared["memory_id"],),
+            )
+        )
+        self.assertEqual(row["status"], "SUPERSEDED")
+
+    def test_the_topic_can_be_answered_again_afterwards(self) -> None:
+        self.withdraw()
+
+        again = self.service.declare_collaboration_memory(
+            actor_id=self.actor,
+            topic="SYNC_PREFERENCE",
+            code="INTERRUPTIBLE",
+            message_id="declare-again",
+        )
+
+        self.assertEqual(again["status"], "CONFIRMED")
+        self.assertEqual(again["code"], "INTERRUPTIBLE")
+
+    def test_only_its_subject_may_withdraw_it(self) -> None:
+        with self.assertRaises(PermissionError):
+            self.service.decide_collaboration_memory(
+                self.declared["memory_id"],
+                actor_id=self.service.aggregator_actor_id,
+                action="WITHDRAW",
+                message_id="withdraw-by-someone-else",
+            )
+
+    def test_withdrawing_is_audited_rather_than_deleted(self) -> None:
+        """The row stays and the trail grows; nothing is erased."""
+
+        self.withdraw()
+
+        row = self.db.one(
+            "SELECT count(*) AS n FROM audit_events WHERE event_type = ? "
+            "AND aggregate_id = ?",
+            ("CollaborationMemoryWithdrawn", self.declared["memory_id"]),
+        )
+        self.assertEqual(dict(row)["n"], 1)
+
+    def test_a_draft_is_rejected_rather_than_withdrawn(self) -> None:
+        """The two words mean different things and the domain keeps them apart."""
+
+        with self.assertRaisesRegex(ValueError, "only a confirmed memory"):
+            self.service.decide_collaboration_memory(
+                self.declared["memory_id"],
+                actor_id=self.actor,
+                action="WITHDRAW",
+                message_id="double-withdraw",
+            ) if self.withdraw() else None

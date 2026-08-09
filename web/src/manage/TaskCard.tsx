@@ -363,7 +363,7 @@ export function ContributionPanel({
   onDecide,
 }: {
   contributions: Version[];
-  onDecide: (versionId: string, decision: string, comment: string) => void;
+  onDecide: (versionId: string, action: string, comment: string) => void;
 }) {
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   if (!contributions.length) return null;

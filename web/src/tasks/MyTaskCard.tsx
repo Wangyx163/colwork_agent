@@ -160,11 +160,14 @@ export function MyTaskCard({
               contributions={(task.contribution_versions || []).filter(
                 (version) => version.contribution_status === "AWAITING_OWNER",
               )}
-              onDecide={(versionId, decision, comment) =>
+              onDecide={(versionId, action, comment) =>
                 post(
                   `/api/artifact-versions/${versionId}/contribution`,
-                  { decision, comment, message_id: messageId("contribution") },
-                  decision === "REQUEST_REVISION"
+                  // `action`, not `decision`: the route reads this key by name
+                  // and an unknown one arrives as the empty string, which the
+                  // domain rejects with a message about the three it wanted.
+                  { action, comment, message_id: messageId("contribution") },
+                  action === "REQUEST_REVISION"
                     ? "已请对方再改"
                     : "已处理这份材料",
                 )

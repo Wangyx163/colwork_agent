@@ -3,6 +3,7 @@ import { getJson, messageId, postJson } from "./api";
 import type { ManageState, Task } from "./manage-types";
 import { buildStrip, formatDay } from "./manage/schedule";
 import { ScheduleStrip } from "./manage/ScheduleStrip";
+import { StructurePanel } from "./manage/StructurePanel";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
 
@@ -208,6 +209,8 @@ export default function ManagePage() {
           <Blank>都派完了。</Blank>
         )}
       </Zone>
+
+      <StructurePanel state={state} act={act} />
 
       {/* 03 --------------------------------------------------------------- */}
       <Zone

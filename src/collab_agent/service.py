@@ -13,6 +13,7 @@ from .content_pack import validate_content_pack
 from .mock_im import MockIM
 from .memory_lexicon import (
     SELF_DECLARED,
+    SYSTEM_OBSERVED,
     canonical_topic,
     memory_value,
     projected_value,
@@ -4746,25 +4747,11 @@ class CoordinationService:
             # A version resubmitted because the coordinator rejected the previous
             # one is a property of the task, not a working preference.  Only
             # voluntary revisions count toward an iteration habit.
-            voluntary_versions = [
-                item
-                for item in versions
-                if item.get("review_status") != "REJECTED"
-            ]
-            if len(voluntary_versions) >= 2:
-                candidate_specs.append(
-                    (
-                        "DELIVERY_RHYTHM",
-                        {
-                            **memory_value("DELIVERY_RHYTHM", "ITERATIVE_REVIEW"),
-                            "observation_count": len(voluntary_versions),
-                        },
-                        [
-                            f'version:{item["version_id"]}'
-                            for item in voluntary_versions
-                        ],
-                    )
-                )
+            # 交付模式 used to be counted here, from how many versions somebody
+            # submitted voluntarily. It is asked in the questionnaire now: it is
+            # a headline working style a person can state about themselves, and
+            # observation is better spent on the behaviour they misjudge. The
+            # guard below would reject it anyway.
             resolved_help = [item for item in assistance if item["status"] == "RESOLVED"]
             if resolved_help:
                 candidate_specs.append(
@@ -4865,6 +4852,15 @@ class CoordinationService:
                     evidence_refs,
                 )
                 for topic, value, evidence_refs in candidate_specs
+            ]
+            # Nothing observed may land on a self-declared topic. Those are the
+            # ones the system has no way to see without guessing at intent, so
+            # a rule or a nomination reaching one is a bug, and writing it would
+            # put words in somebody's mouth under the label "observed".
+            candidate_specs = [
+                spec
+                for spec in candidate_specs
+                if topic_origin(spec[0]) == SYSTEM_OBSERVED
             ]
             memory_ids: list[str] = []
             with self.db.transaction() as cursor:

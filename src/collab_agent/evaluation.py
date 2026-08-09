@@ -384,6 +384,19 @@ def run_p0_evaluation(
         )
 
     service.advance_time("2026-08-04T13:00:00+10:00")
+    # Two quick statuses on the way. They are what makes this task observable
+    # at all: the delivery-rhythm candidate it used to produce is asked in the
+    # questionnaire now, and without some signal here the run would reach the
+    # decline step with nothing to decline -- which would quietly delete the
+    # coverage rather than fail.
+    for at, signal in (("11:00", "ON_TRACK"), ("12:00", "AT_RISK")):
+        service.record_progress_signal(
+            "ai_training",
+            actor_id="owner_c",
+            signal_type=signal,
+            note="",
+            message_id=f"training_signal_{at}",
+        )
     service.submit_artifact(
         "ai_training",
         actor_id="owner_c",

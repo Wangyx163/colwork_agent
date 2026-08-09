@@ -632,14 +632,11 @@ class TaskResultFlowTests(unittest.TestCase):
             (owner,),
         )
         topics = {row["topic"] for row in drafts}
-        self.assertTrue(
-            {
-                "HELP_SEEKING",
-                "PROGRESS_SIGNAL",
-                "DELIVERY_RHYTHM",
-            }
-            <= topics
-        )
+        self.assertTrue({"HELP_SEEKING", "PROGRESS_SIGNAL"} <= topics)
+        # 交付模式 is asked in the questionnaire now rather than counted from
+        # version history, so observing it here would be the system answering
+        # a question that belongs to the person.
+        self.assertNotIn("DELIVERY_RHYTHM", topics)
 
         provider = VirtualSessionPrincipalProvider(
             self.db,
@@ -671,37 +668,29 @@ class TaskResultFlowTests(unittest.TestCase):
             message_id="memory-confirm",
         )
         self.assertEqual(confirmed["status"], "CONFIRMED")
-        corrected = self.service.decide_collaboration_memory(
-            by_topic["PROGRESS_SIGNAL"]["memory_id"],
-            actor_id=owner,
-            action="REPLACE",
-            replacement_code="MILESTONE_ONLY",
-            message_id="memory-correct",
-        )
-        self.assertEqual(corrected["status"], "CONFIRMED")
-        rejected = self.service.decide_collaboration_memory(
-            by_topic["DELIVERY_RHYTHM"]["memory_id"],
-            actor_id=owner,
-            action="REJECT",
-            message_id="memory-reject",
-        )
-        self.assertEqual(rejected["status"], "REJECTED")
+        # An evaluative label cannot be smuggled in as a correction. This runs
+        # before the reject below because it needs a draft still standing --
+        # and it is the assertion here most worth keeping, since the lexicon is
+        # the only thing preventing "unreliable person" from being stored about
+        # somebody.
         with self.assertRaisesRegex(ValueError, "not allowed for this topic"):
-            remaining = next(
-                row
-                for row in self.db.all(
-                    "SELECT * FROM collaboration_memories WHERE actor_id = ? "
-                    "AND status = 'PRIVATE_DRAFT'",
-                    (owner,),
-                )
-            )
             self.service.decide_collaboration_memory(
-                remaining["memory_id"],
+                by_topic["PROGRESS_SIGNAL"]["memory_id"],
                 actor_id=owner,
                 action="REPLACE",
                 replacement_code="UNRELIABLE_PERSON",
                 message_id="memory-prohibited",
             )
+        # Declining is a first-class outcome, not a failure to respond.
+        # Correcting a draft to another value in the same topic is exercised by
+        # the P0 evaluation, which has a run long enough to reach it.
+        rejected = self.service.decide_collaboration_memory(
+            by_topic["PROGRESS_SIGNAL"]["memory_id"],
+            actor_id=owner,
+            action="REJECT",
+            message_id="memory-reject",
+        )
+        self.assertEqual(rejected["status"], "REJECTED")
 
 
 if __name__ == "__main__":

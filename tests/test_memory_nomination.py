@@ -65,8 +65,8 @@ class ValidationTests(unittest.TestCase):
             {
                 "labels": [
                     {
-                        "topic": "DELIVERY_RHYTHM",
-                        "code": "COMPLETE_FIRST",
+                        "topic": "SCHEDULE_HABIT",
+                        "code": "COMMIT_EARLY",
                         "evidence_refs": ["evt_1"],
                     }
                 ]
@@ -74,7 +74,7 @@ class ValidationTests(unittest.TestCase):
         ).nominate(REPORT, evidence_refs=EVIDENCE)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].code, "COMPLETE_FIRST")
+        self.assertEqual(result[0].code, "COMMIT_EARLY")
         self.assertEqual(result[0].evidence_refs, ("evt_1",))
 
     def test_an_invented_label_is_dropped(self) -> None:
@@ -82,7 +82,7 @@ class ValidationTests(unittest.TestCase):
             {
                 "labels": [
                     {
-                        "topic": "DELIVERY_RHYTHM",
+                        "topic": "SCHEDULE_HABIT",
                         "code": "WORKS_FAST",
                         "evidence_refs": ["evt_1"],
                     }
@@ -93,21 +93,31 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_a_self_declared_topic_is_refused(self) -> None:
-        """The Group A/B split is the rule that stops the model guessing intent."""
+        """The split is the rule that stops the model guessing intent.
 
-        result = nominator(
-            {
-                "labels": [
-                    {
-                        "topic": "FEEDBACK_STYLE",
-                        "code": "DIRECT",
-                        "evidence_refs": ["evt_1"],
-                    }
-                ]
-            }
-        ).nominate(REPORT, evidence_refs=EVIDENCE)
+        Both are checked: one the system could never see (how somebody wants
+        feedback), and one it plausibly could (how finished they like a draft
+        before showing it) but which is asked in the questionnaire instead.
+        The second is the easier mistake to make.
+        """
 
-        self.assertEqual(result, [])
+        for topic, code in (
+            ("FEEDBACK_STYLE", "DIRECT"),
+            ("DELIVERY_RHYTHM", "DRAFT_FIRST"),
+        ):
+            result = nominator(
+                {
+                    "labels": [
+                        {
+                            "topic": topic,
+                            "code": code,
+                            "evidence_refs": ["evt_1"],
+                        }
+                    ]
+                }
+            ).nominate(REPORT, evidence_refs=EVIDENCE)
+
+            self.assertEqual(result, [], topic)
 
     def test_a_label_citing_nothing_real_is_dropped(self) -> None:
         """An unsupported label is a claim about a person with no basis."""
@@ -150,13 +160,13 @@ class ValidationTests(unittest.TestCase):
             {
                 "labels": [
                     {
-                        "topic": "DELIVERY_RHYTHM",
-                        "code": "DRAFT_FIRST",
+                        "topic": "SCHEDULE_HABIT",
+                        "code": "COMMIT_EARLY",
                         "evidence_refs": ["evt_1"],
                     },
                     {
-                        "topic": "DELIVERY_RHYTHM",
-                        "code": "COMPLETE_FIRST",
+                        "topic": "SCHEDULE_HABIT",
+                        "code": "RENEGOTIATE_EARLY",
                         "evidence_refs": ["evt_2"],
                     },
                 ]

@@ -40,7 +40,11 @@ class LexiconContractTests(unittest.TestCase):
         )
         # Wanting something from others cannot be observed without guessing.
         self.assertEqual(topic_origin("FEEDBACK_STYLE"), SELF_DECLARED)
-        self.assertEqual(topic_origin("DELIVERY_RHYTHM"), SYSTEM_OBSERVED)
+        # A headline working style is asked, not watched: broad enough that a
+        # person can answer it about themselves, which is what the split turns
+        # on. Observation is spent on the fine-grained behaviour instead.
+        self.assertEqual(topic_origin("DELIVERY_RHYTHM"), SELF_DECLARED)
+        self.assertEqual(topic_origin("PROGRESS_SIGNAL"), SYSTEM_OBSERVED)
 
     def test_v1_entries_still_resolve_after_the_rename(self) -> None:
         self.assertEqual(canonical_topic("UPDATE_STYLE"), "PROGRESS_SIGNAL")
@@ -177,8 +181,8 @@ class SelfDeclaredMemoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be confirmed"):
             self.service.declare_collaboration_memory(
                 actor_id=self.actor,
-                topic="DELIVERY_RHYTHM",
-                code="DRAFT_FIRST",
+                topic="PROGRESS_SIGNAL",
+                code="QUICK_SIGNAL",
                 message_id="declare-observed",
             )
 

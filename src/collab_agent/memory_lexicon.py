@@ -60,8 +60,12 @@ MEMORY_TOPICS: dict[str, dict[str, Any]] = {
     # somebody remembers and repeats; the sentence after the colon is what
     # makes it checkable. The reversibility rule still binds: swap any two
     # modes inside a topic and neither may read as the worse one.
+    # Broad enough that a person can answer it about themselves without being
+    # shown data, which is what puts it on the self-declared side: the
+    # questionnaire asks the headline working styles, and the system is left
+    # to watch the fine-grained behaviour people misjudge about themselves.
     "DELIVERY_RHYTHM": {
-        "origin": SYSTEM_OBSERVED,
+        "origin": SELF_DECLARED,
         "title": "交付模式",
         "prompt": "东西做到什么程度，你会先拿出来？",
         "values": (

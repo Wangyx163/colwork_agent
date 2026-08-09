@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Activity, Task } from "../manage-types";
+import type { Activity, Task, Version } from "../manage-types";
 import { formatDay } from "./schedule";
 import { ProcessingReview } from "./ProcessingReview";
 
@@ -347,6 +347,89 @@ function AwaitingDetail({ task }: { task: Task }) {
         );
       })}
     </ul>
+  );
+}
+
+/** A collaborator's contribution, waiting on the task owner.
+ *
+ *  A contribution is not a delivery: it cannot be accepted, and it never
+ *  enters the review flow on its own. The owner folds it into their own
+ *  version, asks for changes, or promotes it to be the final candidate. Until
+ *  now none of those three were reachable, so a collaborator could submit and
+ *  then watch nothing happen forever.
+ */
+export function ContributionPanel({
+  contributions,
+  onDecide,
+}: {
+  contributions: Version[];
+  onDecide: (versionId: string, decision: string, comment: string) => void;
+}) {
+  const [feedback, setFeedback] = useState<Record<string, string>>({});
+  if (!contributions.length) return null;
+  return (
+    <div className="mt-3 grid gap-2 border-t border-rule-2 pt-3">
+      <p className="text-[0.8rem] font-semibold">协作者交上来的材料</p>
+      {contributions.map((version) => {
+        const payload = version.payload || {};
+        const note = feedback[version.version_id] ?? "";
+        return (
+          <div
+            key={version.version_id}
+            className="rounded border border-rule-2 bg-ground px-3 py-2.5"
+          >
+            <div className="flex flex-wrap items-baseline gap-2">
+              <b className="text-[0.82rem]">
+                {payload.summary || "未写摘要"}
+              </b>
+              <span className="font-mono text-[0.7rem] text-ink-3">
+                {version.submitted_by_display_name}
+              </span>
+            </div>
+            {payload.content ? (
+              <p className="mt-1 max-h-40 overflow-y-auto text-[0.8rem] whitespace-pre-wrap text-ink-2">
+                {payload.content}
+              </p>
+            ) : null}
+            <label className="mt-2 grid gap-1 text-[0.78rem]">
+              要改的话写清楚（退回时必填）
+              <input
+                value={note}
+                onChange={(event) =>
+                  setFeedback((current) => ({
+                    ...current,
+                    [version.version_id]: event.target.value,
+                  }))
+                }
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+              />
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                onClick={() => onDecide(version.version_id, "INCLUDE", note)}
+              >
+                采纳进我的版本
+              </Button>
+              <Button
+                tone="ghost"
+                onClick={() => onDecide(version.version_id, "PROMOTE", note)}
+              >
+                直接作为最终候选
+              </Button>
+              <Button
+                tone="ghost"
+                disabled={!note.trim()}
+                onClick={() =>
+                  onDecide(version.version_id, "REQUEST_REVISION", note)
+                }
+              >
+                请对方再改
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

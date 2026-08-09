@@ -84,6 +84,10 @@ export function VotePanel({
         <BallotDraft task={task} act={act} />
       ) : null}
 
+      {options.length && !progress?.ballot_open ? (
+        <OpenBallot task={task} options={options} act={act} />
+      ) : null}
+
       {options.length ? (
         <Scoring
           task={task}
@@ -117,6 +121,46 @@ function BallotDraft({ task, act }: { task: Task; act: Act }) {
           }
         >
           整理候选
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Publishing the shortlist.
+ *
+ *  Drafting it and voting on it were both reachable and the step between them
+ *  was not, so a shortlist could be prepared and then never put to anybody.
+ *  It is a separate step on purpose: the person who merged the questions gets
+ *  to read them once more before everybody is asked to score them. */
+function OpenBallot({
+  task,
+  options,
+  act,
+}: {
+  task: Task;
+  options: Option[];
+  act: Act;
+}) {
+  return (
+    <div className="mt-3 rounded border border-accent bg-accent-wash px-3 py-2.5">
+      <p className="text-[0.82rem]">
+        候选已整理好 {options.length} 条，检查无误就可以让大家打分。
+      </p>
+      <div className="mt-2">
+        <Button
+          onClick={() =>
+            void act(
+              () =>
+                postJson(`/api/action-items/${task.action_item_id}/ballot`, {
+                  options,
+                  message_id: messageId("open-ballot"),
+                }),
+              "投票已开启，指定的人会看到打分界面",
+            )
+          }
+        >
+          开启投票
         </Button>
       </div>
     </div>

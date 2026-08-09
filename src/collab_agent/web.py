@@ -1095,6 +1095,11 @@ def workbench_state(
             "assistance_categories": list(
                 CoordinationService.ASSISTANCE_CATEGORIES
             ),
+            # The upload limits the server enforces. A page that repeats them
+            # in TypeScript lets somebody spend a minute choosing files and
+            # then take a 413 -- the numbers have to be the same numbers.
+            "max_attachment_count": MAX_ATTACHMENT_COUNT,
+            "max_attachment_bytes": MAX_TOTAL_ATTACHMENT_BYTES,
         },
         "tasks": tasks,
         "notices": notices,

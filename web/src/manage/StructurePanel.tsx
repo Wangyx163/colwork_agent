@@ -81,7 +81,7 @@ export function StructurePanel({
       {declared.length ? (
         <div className="mb-3 grid gap-2">
           {declared.map((task) => (
-            <Declared key={task.action_item_id} task={task} />
+            <Declared key={task.action_item_id} task={task} act={act} />
           ))}
         </div>
       ) : null}
@@ -197,7 +197,9 @@ export function StructurePanel({
   );
 }
 
-function Declared({ task }: { task: Task }) {
+function Declared({ task, act }: { task: Task; act: Act }) {
+  const [revoking, setRevoking] = useState(false);
+  const [reason, setReason] = useState("");
   const progress = task.collaboration_progress;
   const dependencies = (progress?.dependencies || []) as {
     upstream_title: string;
@@ -221,6 +223,53 @@ function Declared({ task }: { task: Task }) {
           </li>
         ))}
       </ul>
+
+      {/* A structure declared over the wrong tasks blocks the merge task
+          forever: it waits on upstreams that will never be accepted, and no
+          amount of ordinary work clears it. Undoing has to be reachable. */}
+      <div className="mt-2">
+        <button
+          onClick={() => setRevoking((open) => !open)}
+          className="font-mono text-[0.73rem] text-ink-3 underline hover:text-ink"
+        >
+          {revoking ? "取消" : "撤销这组"}
+        </button>
+      </div>
+      {revoking ? (
+        <div className="mt-2 grid gap-2 rounded border border-warn bg-warn-wash px-3 py-2.5">
+          <label className="grid gap-1 text-[0.79rem]">
+            撤销原因
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <p className="text-[0.77rem] text-ink-2">
+            依赖和已记录的参与会被移除，底层任务不受影响。
+          </p>
+          <div>
+            <Button
+              disabled={!reason.trim()}
+              onClick={() =>
+                void act(async () => {
+                  const result = await postJson<{
+                    removed_dependency_count?: number;
+                    removed_participation_input_count?: number;
+                  }>(
+                    `/api/collaboration-structures/question-vote/${task.action_item_id}/revoke`,
+                    { reason, message_id: messageId("revoke") },
+                  );
+                  void result;
+                  setRevoking(false);
+                }, "结构已撤销")
+              }
+            >
+              确认撤销
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }

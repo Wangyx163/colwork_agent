@@ -66,6 +66,15 @@ export interface Version {
    *  text. Every point it states carries the source it came from, and it
    *  recommends without deciding -- acceptance stays with a person. */
   processing_result?: TaskResultReview | null;
+  /** Only on a contribution version. AWAITING_OWNER is the outstanding one --
+   *  read off a real payload, because `review_status` is a different field
+   *  with different values and filtering on it silently matches nothing. */
+  contribution_status?:
+    | "AWAITING_OWNER"
+    | "INCLUDED"
+    | "REVISION_REQUESTED"
+    | "PROMOTED";
+  can_request_revision?: boolean;
 }
 
 export interface SourcedPoint {
@@ -124,8 +133,11 @@ export interface AssistanceRequest {
   action_item_id: string;
   status: string;
   summary?: string;
+  category?: string;
   requested_by_actor_id?: string;
+  target_actor_id?: string;
   requested_sim_time?: string;
+  resolution_summary?: string;
 }
 
 export interface Notice {
@@ -191,6 +203,10 @@ export interface Task {
   collaborators: { actor_id: string; display_name?: string }[];
   latest_version: Version | null;
   current_version: Version | null;
+  /** Versions submitted by collaborators rather than the owner. They are not
+   *  deliveries: only the owner can fold one in, ask for changes, or promote
+   *  it to be the final candidate. */
+  contribution_versions?: Version[];
   accepted_task_result: Record<string, unknown> | null;
   latest_progress: Record<string, unknown> | null;
   /* Present on the participant surface. */
@@ -223,12 +239,39 @@ export interface FinalDeliverable {
   generated_sim_time?: string | null;
   approved_sim_time?: string | null;
   payload?: {
-    sections?: { heading?: string; body?: string; source_version_id?: string }[];
-    conclusions?: string[];
-    risks?: string[];
+    organized_report?: OrganizedReport | null;
+    /** How the report above was produced. Shown, because "a model wrote this"
+     *  and "a template assembled this" are different claims and the reader is
+     *  entitled to know which one they are looking at. */
+    processing?: {
+      mode?: string;
+      provider?: string | null;
+      model?: string | null;
+      prompt_version?: string;
+    } | null;
     [key: string]: unknown;
   } | null;
   release_review?: Record<string, unknown> | null;
+}
+
+export interface OrganizedReport {
+  title?: string;
+  executive_summary?: string;
+  key_findings?: {
+    text: string;
+    source_version_ids?: string[];
+    source_result_ids?: string[];
+  }[];
+  sections?: {
+    action_item_id?: string;
+    heading?: string;
+    summary?: string;
+    detail?: string;
+    links?: string[];
+    attachments?: { name?: string }[];
+    source_version_id?: string;
+  }[];
+  risks_or_gaps?: { text?: string; source_version_ids?: string[] }[];
 }
 
 export interface MeetingProgress {
@@ -256,6 +299,8 @@ export interface Vocabulary {
   other_return_reason: string;
   quick_signals: string[];
   assistance_categories: string[];
+  max_attachment_count: number;
+  max_attachment_bytes: number;
 }
 
 export interface ManageState {

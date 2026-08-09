@@ -2,7 +2,8 @@ import { useState, type ReactNode } from "react";
 import { messageId, postJson } from "../api";
 import type { ManageState, Task, Vocabulary } from "../manage-types";
 import { formatDay } from "../manage/schedule";
-import { Button, Chip, TaskCard } from "../manage/TaskCard";
+import { Button, Chip, ContributionPanel, TaskCard } from "../manage/TaskCard";
+import { AssistancePanel } from "./AssistancePanel";
 import { useDraft } from "./useDraft";
 
 export type Act = (run: () => Promise<unknown>, done: string) => Promise<void>;
@@ -68,11 +69,15 @@ export function MyTaskCard({
     Boolean(task.team_required_by_sim_time) &&
     task.promised_by_sim_time! > task.team_required_by_sim_time!;
 
-  const post = (path: string, body: Record<string, unknown>, done: string) =>
+  // Call sites carry the whole path rather than a verb the helper glues on:
+  // a URL assembled from a variable cannot be found by grep, and the check
+  // that every server route is reachable from a page reads the source.
+  const post = (url: string, body: Record<string, unknown>, done: string) =>
     void act(async () => {
-      await postJson(`/api/action-items/${task.action_item_id}/${path}`, body);
+      await postJson(url, body);
       setPanel("");
     }, done);
+  const id = task.action_item_id;
 
   const toggle = (next: Panel) =>
     setPanel((current) => (current === next ? "" : next));
@@ -87,7 +92,7 @@ export function MyTaskCard({
           tone: "good" as const,
           run: () =>
             post(
-              "assignment-response",
+              `/api/action-items/${id}/assignment-response`,
               {
                 decision: "ACCEPT",
                 response_message: "",
@@ -148,13 +153,32 @@ export function MyTaskCard({
             </p>
           ) : null}
 
+          <AssistancePanel task={task} me={me} act={act} />
+
+          {owner ? (
+            <ContributionPanel
+              contributions={(task.contribution_versions || []).filter(
+                (version) => version.contribution_status === "AWAITING_OWNER",
+              )}
+              onDecide={(versionId, decision, comment) =>
+                post(
+                  `/api/artifact-versions/${versionId}/contribution`,
+                  { decision, comment, message_id: messageId("contribution") },
+                  decision === "REQUEST_REVISION"
+                    ? "已请对方再改"
+                    : "已处理这份材料",
+                )
+              }
+            />
+          ) : null}
+
           {panel === "return" ? (
             <ReturnPanel
               vocabulary={state.vocabulary}
               onCancel={() => setPanel("")}
               onSend={(reason) =>
                 post(
-                  "assignment-response",
+                  `/api/action-items/${id}/assignment-response`,
                   {
                     decision: "RETURN_FOR_REVISION",
                     response_message: reason,
@@ -173,7 +197,7 @@ export function MyTaskCard({
               onCancel={() => setPanel("")}
               onSignal={(signal, note) =>
                 post(
-                  "signal",
+                  `/api/action-items/${id}/signal`,
                   {
                     signal_type: signal,
                     note,
@@ -184,7 +208,7 @@ export function MyTaskCard({
               }
               onReschedule={(date, reason) =>
                 post(
-                  "personal-commitment",
+                  `/api/action-items/${id}/personal-commitment`,
                   {
                     proposed_deadline_sim_time: `${date}T17:00:00+10:00`,
                     reason,
@@ -202,7 +226,7 @@ export function MyTaskCard({
               onCancel={() => setPanel("")}
               onSend={(target, category, summary) =>
                 post(
-                  "assistance",
+                  `/api/action-items/${id}/assistance`,
                   {
                     target_actor_id: target,
                     category,
@@ -218,13 +242,14 @@ export function MyTaskCard({
           {panel === "submit" ? (
             <SubmitPanel
               draftKey={task.action_item_id}
+              limits={state.vocabulary}
               onCancel={() => setPanel("")}
-              onSend={(summary, content, clear) =>
+              onSend={(summary, content, files, clear) =>
                 void act(async () => {
                   await postJson(
                     `/api/action-items/${task.action_item_id}/submit`,
                     {
-                      delivery: { summary, content },
+                      delivery: { summary, content, files },
                       message_id: messageId("submit"),
                     },
                   );
@@ -244,7 +269,7 @@ export function MyTaskCard({
               onCancel={() => setPanel("")}
               onSend={(title, deliverable) =>
                 post(
-                  "amend",
+                  `/api/action-items/${id}/amend`,
                   { title, deliverable, message_id: messageId("amend") },
                   "已更新，协作的人会收到提示",
                 )
@@ -284,6 +309,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
+}
+
+/** The server takes attachments as data URLs, so the file never leaves the
+ *  browser as anything else. */
+function asDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 const INPUT =
@@ -504,20 +540,70 @@ function HelpPanel({
   );
 }
 
+interface Upload {
+  name: string;
+  type: string;
+  size: number;
+  data: string;
+}
+
 function SubmitPanel({
   draftKey,
+  limits,
   onCancel,
   onSend,
 }: {
   draftKey: string;
+  limits: Vocabulary;
   onCancel: () => void;
-  onSend: (summary: string, content: string, clear: () => void) => void;
+  onSend: (
+    summary: string,
+    content: string,
+    files: Upload[],
+    clear: () => void,
+  ) => void;
 }) {
   const [summary, setSummary, clearSummary] = useDraft(`${draftKey}:summary`);
   const [content, setContent, clearContent] = useDraft(`${draftKey}:content`);
+  // Files are not drafted: they live in the picker until the submission goes,
+  // because a megabyte of base64 in localStorage would fill the quota and
+  // silently break the text drafts that matter more.
+  const [files, setFiles] = useState<Upload[]>([]);
+  const [problem, setProblem] = useState("");
+  const bytes = files.reduce((total, file) => total + file.size, 0);
   const clear = () => {
     clearSummary();
     clearContent();
+    setFiles([]);
+  };
+
+  const add = async (picked: FileList | null) => {
+    if (!picked?.length) return;
+    setProblem("");
+    const chosen: Upload[] = [];
+    for (const file of Array.from(picked)) {
+      chosen.push({
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        data: await asDataUrl(file),
+      });
+    }
+    const merged = [...files, ...chosen];
+    // Checked here as well as on the server, so somebody learns before
+    // spending a minute picking files rather than after a 413.
+    if (merged.length > limits.max_attachment_count) {
+      setProblem(`最多 ${limits.max_attachment_count} 个附件`);
+      return;
+    }
+    const total = merged.reduce((sum, file) => sum + file.size, 0);
+    if (total > limits.max_attachment_bytes) {
+      setProblem(
+        `附件总大小上限 ${Math.round(limits.max_attachment_bytes / (1024 * 1024))} MB`,
+      );
+      return;
+    }
+    setFiles(merged);
   };
 
   return (
@@ -537,13 +623,56 @@ function SubmitPanel({
           className={INPUT}
         />
       </Field>
+      <Field label={`附件（最多 ${limits.max_attachment_count} 个）`}>
+        <input
+          type="file"
+          multiple
+          onChange={(event) => {
+            void add(event.target.files);
+            event.target.value = "";
+          }}
+          className="text-[0.78rem]"
+        />
+      </Field>
+      {files.length ? (
+        <ul className="grid gap-1">
+          {files.map((file, index) => (
+            <li
+              key={`${file.name}-${index}`}
+              className="flex items-center gap-2 text-[0.78rem]"
+            >
+              <span className="flex-1 truncate">{file.name}</span>
+              <span className="font-mono text-[0.7rem] text-ink-3">
+                {Math.max(1, Math.round(file.size / 1024))} KB
+              </span>
+              <button
+                onClick={() =>
+                  setFiles((current) =>
+                    current.filter((_, at) => at !== index),
+                  )
+                }
+                className="font-mono text-[0.72rem] text-ink-3 underline hover:text-bad"
+              >
+                移除
+              </button>
+            </li>
+          ))}
+          <li className="font-mono text-[0.72rem] text-ink-3">
+            共 {Math.max(1, Math.round(bytes / 1024))} KB
+          </li>
+        </ul>
+      ) : null}
+      {problem ? (
+        <p className="text-[0.78rem] text-bad">{problem}</p>
+      ) : null}
       <p className="text-[0.75rem] text-ink-3">
-        摘要和正文都必填——缺一样校验会判不通过，任务不会进入待验收。写到一半刷新也不会丢。
+        摘要和正文都必填——缺一样校验会判不通过，任务不会进入待验收。写到一半刷新也不会丢（附件除外）。
+        PDF / Word / Excel / PPT 的正文会被读出来，供验收时核对。
       </p>
       <div className="flex gap-2">
         <Button
           disabled={!summary.trim() || !content.trim()}
-          onClick={() => onSend(summary, content, clear)}
+          onClick={() => onSend(summary, content, files, clear)}
         >
           提交
         </Button>

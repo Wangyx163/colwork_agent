@@ -913,7 +913,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .feishu_commands import AssignmentBridge
         from .feishu_config import FeishuConfig
         from .feishu_notifier import AssignmentNotifier
-        from .meeting import load_meeting_service
         from .thread_local_store import ThreadLocalDatabase
 
         factory = _database_factory(args, allow_cross_thread=True)
@@ -980,6 +979,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         import threading
 
         stop = threading.Event()
+        # The workbench and the processor have to live together for the chain
+        # to close. Acceptance is gated on result processing having finished,
+        # and the HTTP server only ever *reported* that status -- so a
+        # submission with an attachment sat at PENDING forever unless somebody
+        # happened to be running `agent-meeting` in another terminal. One
+        # process, like the Feishu side.
         if args.feishu:
             # One process, both surfaces. The Feishu connection blocks, so it
             # runs on a thread and the HTTP server keeps the main one; the
@@ -1013,8 +1018,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             threading.Thread(
                 target=run_connection, name="feishu-connection", daemon=True
             ).start()
-        else:
+        elif args.result_processing == "disabled":
             database, service = _load_meeting_from_args(args)
+        else:
+            # A worker runs on its own thread, so the database is opened per
+            # thread for the same reason the Feishu runtime does it: a SQLite
+            # connection belongs to the thread that made it.
+            from .thread_local_store import ThreadLocalDatabase
+
+            factory = _database_factory(args, allow_cross_thread=True)
+            bootstrap = factory()
+            bootstrap.initialize()
+            bootstrap.close()
+            database = ThreadLocalDatabase(factory)
+            service = load_meeting_service(
+                database,
+                extraction_path=args.extraction,
+                transcript_path=args.transcript,
+                organization_name=args.organization,
+                coordinator_name=args.coordinator,
+                participant_names=args.participant,
+            )
+            _catch_clock_up(service)
+
+        if args.result_processing != "disabled":
+            worker = AgentWorker(
+                service, processing_mode=args.result_processing
+            )
+
+            def process_loop() -> None:
+                worker.recover()
+                while not stop.wait(args.dispatch_seconds):
+                    try:
+                        worker.run_until_idle(max_steps=20)
+                    except Exception as error:  # noqa: BLE001 - loop must survive
+                        print(f"[worker] processing failed: {error!r}", flush=True)
+
+            threading.Thread(
+                target=process_loop, name="result-processing", daemon=True
+            ).start()
         print(
             f"Meeting collaboration workbench: http://{args.host}:{args.port} "
             f"({service.episode_id})"

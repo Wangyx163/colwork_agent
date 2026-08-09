@@ -3,6 +3,7 @@ import { getJson, messageId, postJson } from "./api";
 import type { ManageState, Task } from "./manage-types";
 import { buildStrip, formatDay } from "./manage/schedule";
 import { ScheduleStrip } from "./manage/ScheduleStrip";
+import { FinalReport } from "./manage/FinalReport";
 import { StructurePanel } from "./manage/StructurePanel";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
@@ -200,6 +201,9 @@ export default function ManagePage() {
                 task={task}
                 state={state}
                 act={act}
+                siblings={awaiting.filter(
+                  (other) => other.action_item_id !== task.action_item_id,
+                )}
                 selected={selected === task.action_item_id}
                 cardRef={bind(task.action_item_id)}
               />
@@ -395,14 +399,19 @@ function DispatchRow({
   act,
   selected,
   cardRef,
+  siblings,
 }: {
   task: Task;
   state: ManageState;
   act: Act;
   selected: boolean;
   cardRef: (node: HTMLElement | null) => void;
+  siblings: Task[];
 }) {
   const [open, setOpen] = useState(false);
+  const [aside, setAside] = useState<"" | "ignore" | "merge">("");
+  const [reason, setReason] = useState("");
+  const [target, setTarget] = useState("");
   const [owner, setOwner] = useState(task.owner_actor_id || "");
   const [helpers, setHelpers] = useState<string[]>([]);
   const [when, setWhen] = useState(
@@ -461,7 +470,95 @@ function DispatchRow({
         <Button onClick={() => setOpen((value) => !value)}>
           {open ? "收起" : "复核并派发"}
         </Button>
+        {/* Not everything extracted is a task. Without these the only way
+            past a mis-extracted item was to dispatch it to somebody. */}
+        <Button tone="ghost" onClick={() => setAside(aside === "ignore" ? "" : "ignore")}>
+          不是任务
+        </Button>
+        {siblings.length ? (
+          <Button tone="ghost" onClick={() => setAside(aside === "merge" ? "" : "merge")}>
+            跟别的合并
+          </Button>
+        ) : null}
       </div>
+
+      {aside === "ignore" ? (
+        <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground px-3 py-2.5">
+          <label className="grid gap-1 text-[0.79rem]">
+            为什么不是任务（会留在审计里）
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button
+              disabled={!reason.trim()}
+              onClick={() =>
+                void act(
+                  () =>
+                    postJson(`/api/action-items/${task.action_item_id}/ignore`, {
+                      reason,
+                      message_id: messageId("ignore"),
+                    }),
+                  "已忽略，记录仍留在审计里",
+                )
+              }
+            >
+              确认忽略
+            </Button>
+            <Button tone="ghost" onClick={() => setAside("")}>
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {aside === "merge" ? (
+        <div className="mt-3 grid gap-2 rounded border border-warn bg-warn-wash px-3 py-2.5">
+          <label className="grid gap-1 text-[0.79rem]">
+            并入哪个任务
+            <select
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            >
+              <option value="">请选择</option>
+              {siblings.map((other) => (
+                <option key={other.action_item_id} value={other.action_item_id}>
+                  {other.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* Merging cannot be undone, so it says what will happen before it
+              happens rather than after. */}
+          <p className="text-[0.77rem] text-ink-2">
+            「{task.title}」的会议出处会并入所选任务，本条不再出现。这一步不可撤销。
+          </p>
+          <div className="flex gap-2">
+            <Button
+              disabled={!target}
+              onClick={() =>
+                void act(
+                  () =>
+                    postJson(`/api/action-items/${task.action_item_id}/merge`, {
+                      target_action_item_id: target,
+                      message_id: messageId("merge"),
+                    }),
+                  "已合并，来源依据已追加到目标任务",
+                )
+              }
+            >
+              确认合并
+            </Button>
+            <Button tone="ghost" onClick={() => setAside("")}>
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {open ? (
         <div className="mt-3 grid gap-2.5 border-t border-rule-2 pt-3">
@@ -673,6 +770,10 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
             </div>
           ))}
       </div>
+
+      {final?.payload?.organized_report ? (
+        <FinalReport final={final} tasks={state.tasks} />
+      ) : null}
 
       {pending.length ? (
         <div className="mt-3 grid gap-2">

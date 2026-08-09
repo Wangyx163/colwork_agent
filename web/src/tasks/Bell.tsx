@@ -29,6 +29,9 @@ export function Bell({
 }) {
   const [open, setOpen] = useState(false);
   const [askedEnough, setAskedEnough] = useState(false);
+  // The newest notice this session has already opened itself for. Without it
+  // the popover reopens after every action, because each one refetches.
+  const announced = useRef("");
   const [seen, setSeen] = useState(
     () => localStorage.getItem(`${SEEN_KEY}:${state.principal.actor_id}`) || "",
   );
@@ -50,6 +53,21 @@ export function Bell({
         state.principal.actor_id,
       );
   const total = pending.length + unseen.length + (questions.length ? 1 : 0);
+
+  // A description that changed under somebody is not something to find later.
+  // They accepted a task that says one thing and it now says another, so the
+  // bell opens itself once for it rather than waiting to be clicked. Once,
+  // and only for something never shown: an alert that reappears is one people
+  // learn to dismiss without reading.
+  useEffect(() => {
+    if (!unseen.length) return;
+    const newest = unseen[0].notice_id;
+    if (announced.current === newest) return;
+    announced.current = newest;
+    setOpen(true);
+    localStorage.setItem(`${SEEN_KEY}:${state.principal.actor_id}`, newest);
+    setSeen(newest);
+  }, [unseen, state.principal.actor_id]);
 
   useEffect(() => {
     if (openSurvey) {

@@ -46,6 +46,10 @@ NOTIFY_VOTE_REQUIRED = "VOTE_REQUIRED"
 NOTIFY_REVIEW_DECIDED = "REVIEW_DECIDED"
 NOTIFY_ASSISTANCE_REQUESTED = "ASSISTANCE_REQUESTED"
 NOTIFY_RESULT_PENDING_REVIEW = "RESULT_PENDING_REVIEW"
+NOTIFY_TASK_AMENDED = "TASK_AMENDED"
+#: The two things a task owner may change about their own task, in the words
+#: a reader uses for them rather than the column names.
+AMENDABLE_FIELD_NAMES = {"title": "任务名称", "deliverable": "任务说明"}
 NOTIFICATION_EFFECT_TYPES = frozenset(
     {
         NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED,
@@ -53,6 +57,7 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_REVIEW_DECIDED,
         NOTIFY_ASSISTANCE_REQUESTED,
         NOTIFY_RESULT_PENDING_REVIEW,
+        NOTIFY_TASK_AMENDED,
     }
 )
 
@@ -2111,6 +2116,189 @@ class CoordinationService:
                 "team_required_by_sim_time": team_required_by
                 or action["team_required_by_sim_time"],
                 "proposal_metadata": metadata,
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
+
+    AMENDABLE_STATUSES = frozenset(
+        {
+            ActionItemStatus.TRACKING,
+            ActionItemStatus.BLOCKED,
+            ActionItemStatus.PENDING_ACCEPTANCE,
+        }
+    )
+
+    def amend_task_description(
+        self,
+        action_item_id: str,
+        *,
+        actor_id: str,
+        title: str,
+        deliverable: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        """Let the person doing the work correct what their task says.
+
+        Deliberately narrower than `revise_action_proposal`, which refuses a
+        task that already has an owner. That refusal is right: what was
+        dispatched and accepted is a commitment, and quietly changing who owes
+        what by when would rewrite an agreement behind the people who made it.
+        Wording is not that -- a title that mis-describes the work is a defect
+        the owner is best placed to fix.
+
+        So the seam is drawn around what may move. The owner, the
+        collaborators, the team's required date, the personal promise and the
+        definition version are all untouched here; only the title and the
+        description are. Whoever else is working on the task is told, because
+        a description that changes silently is worse than one left wrong.
+        """
+
+        title = title.strip()
+        deliverable = deliverable.strip()
+        if not title or not deliverable:
+            raise ValueError("title and description are required")
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+        with self.db.transaction() as cursor:
+            action = cursor.execute(
+                "SELECT * FROM action_items WHERE action_item_id = ? "
+                "AND episode_id = ?",
+                (action_item_id, self.episode_id),
+            ).fetchone()
+            if not action:
+                raise KeyError(action_item_id)
+            if action["owner_actor_id"] != actor_id:
+                raise PermissionError(
+                    "only the task owner may amend its description"
+                )
+            if action["status"] not in self.AMENDABLE_STATUSES:
+                raise ValueError(
+                    "only a task being worked on may have its description amended"
+                )
+
+            metadata = self.proposal_metadata(action)
+            before = {
+                "title": action["title"],
+                "deliverable": metadata.get("deliverable", ""),
+            }
+            after = {"title": title, "deliverable": deliverable}
+            changed_fields = {
+                field: {"before": before[field], "after": after[field]}
+                for field in after
+                if str(before[field] or "") != str(after[field] or "")
+            }
+            if not changed_fields:
+                result = {
+                    "action_item_id": action_item_id,
+                    "title": title,
+                    "changed_fields": {},
+                    "notified_actor_ids": [],
+                }
+                self._record_inbound(
+                    cursor,
+                    message_id=message_id,
+                    result=result,
+                    sim_time=sim_time,
+                )
+                return result
+
+            metadata["deliverable"] = deliverable
+            # `work_requirements` is what the dispatch actually put in front of
+            # the assignee. Leaving it on the old wording would make the task
+            # read one way here and another way on the card someone accepted.
+            metadata["work_requirements"] = deliverable
+            cursor.execute(
+                "UPDATE action_items SET title = ?, proposal_metadata = ?, "
+                "version = version + 1 WHERE action_item_id = ?",
+                (title, canonical_json(metadata), action_item_id),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItem",
+                aggregate_id=action_item_id,
+                event_type="ActionItemDescriptionAmended",
+                sim_time=sim_time,
+                payload={
+                    "amended_by": actor_id,
+                    "changed_fields": changed_fields,
+                    "changed_field_count": len(changed_fields),
+                },
+                correlation_id=correlation_id,
+            )
+
+            # Everyone else attached to the task, coordinator included: they
+            # are working against a description that just changed under them.
+            audience = [
+                *metadata.get("collaborator_actor_ids", []),
+                *(
+                    row["actor_id"]
+                    for row in cursor.execute(
+                        "SELECT actor_id FROM episode_participants "
+                        "WHERE episode_id = ? AND role IN "
+                        "('COORDINATOR', 'AGGREGATOR')",
+                        (self.episode_id,),
+                    ).fetchall()
+                ),
+            ]
+            recipients = [actor for actor in dict.fromkeys(audience) if actor != actor_id]
+            author = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_TASK_AMENDED,
+                recipient_actor_ids=recipients,
+                action_item_id=action_item_id,
+                title=f'{author["display_name"]} 修改了任务说明',
+                summary=title,
+                # What it now says, and what it used to. Naming the columns
+                # ("title", "deliverable") would show a reader the schema
+                # instead of the change.
+                fields=[
+                    {
+                        "label": "改动",
+                        "value": "、".join(
+                            AMENDABLE_FIELD_NAMES[field]
+                            for field in sorted(changed_fields)
+                        ),
+                    },
+                    {"label": "现在的说明", "value": deliverable},
+                ]
+                + (
+                    [
+                        {
+                            "label": "原标题",
+                            "value": changed_fields["title"]["before"],
+                        }
+                    ]
+                    if "title" in changed_fields
+                    else []
+                ),
+                # No decision: nothing is being asked of the reader, and a
+                # button that only dismisses trains people to dismiss.
+                decisions=[],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                # Keyed on the content, so re-saving the same wording collapses
+                # onto one message instead of pinging everyone twice.
+                trigger_key=f"{action_item_id}:{stable_hash(after)}",
+                subject_id=action_item_id,
+            )
+
+            result = {
+                "action_item_id": action_item_id,
+                "title": title,
+                "changed_fields": changed_fields,
+                "notified_actor_ids": recipients,
             }
             self._record_inbound(
                 cursor, message_id=message_id, result=result, sim_time=sim_time

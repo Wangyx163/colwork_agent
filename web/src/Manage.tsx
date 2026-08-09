@@ -128,14 +128,30 @@ export default function ManagePage() {
           {state.meeting_progress.total} 个任务 · 现在{" "}
           {formatDay(state.episode.current_sim_time as string)}
         </span>
-        <nav className="ml-auto flex gap-4 font-mono text-[0.75rem]">
-          <a className="text-accent underline" href="/tasks">
-            我的任务
-          </a>
-          <a className="text-accent underline" href="/observatory">
-            Observatory
-          </a>
-        </nav>
+        <div className="ml-auto flex flex-wrap items-center gap-4">
+          {/* One history switch for the console, not one per zone: "what is
+              already finished" is a single question about the meeting, and
+              answering it in four places made four half-answers. */}
+          <button
+            onClick={() => setReviewHistory((open) => !open)}
+            aria-pressed={reviewHistory}
+            className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[0.76rem] focus-visible:outline-2 focus-visible:outline-accent ${
+              reviewHistory
+                ? "border-accent bg-accent-wash text-accent"
+                : "border-rule text-ink-2 hover:bg-sunk hover:text-ink"
+            }`}
+          >
+            {reviewHistory ? "← 返回待办" : `🕐 历史 ${reviewed.length}`}
+          </button>
+          <nav className="flex gap-4 font-mono text-[0.75rem]">
+            <a className="text-accent underline" href="/tasks">
+              我的任务
+            </a>
+            <a className="text-accent underline" href="/observatory">
+              Observatory
+            </a>
+          </nav>
+        </div>
       </header>
 
       {flash ? (
@@ -151,27 +167,28 @@ export default function ManagePage() {
       {/* 01 --------------------------------------------------------------- */}
       <Zone
         n="01"
-        name="任务"
+        name="团队进度"
         anchor="zone-tasks"
         pending={conflicts}
         pendingLabel={
           conflicts ? `${conflicts} 项工期冲突` : `${inFlight.length} 项执行中`
         }
-        why="复核与执行是同一批任务的不同状态，不再分成两块。上面的排期条一次看全，点任一条，对应卡片会高亮——其余卡片留在原地。"
+        why="竖线是现在，每根条从这里往右量剩下的时间。竖刻度是团队要求交付的那天，虚线段是本人承诺超出它的部分。点任一条，下面对应的卡片会高亮。"
       >
         <ScheduleStrip strip={strip} selected={selected} onPick={pick} />
         {inFlight.length ? (
           <div className="grid gap-2">
             {inFlight.map((task) => (
-              <TaskCard
+              <InFlightCard
                 key={task.action_item_id}
                 task={task}
+                me={state.principal.actor_id}
                 late={lateness.has(task.action_item_id)}
                 lateDays={lateness.get(task.action_item_id)}
                 selected={selected === task.action_item_id}
                 cardRef={bind(task.action_item_id)}
                 onSelect={() => setSelected(task.action_item_id)}
-                actions={teamDateActions(task, state, act)}
+                act={act}
               />
             ))}
           </div>
@@ -188,7 +205,7 @@ export default function ManagePage() {
         pending={awaiting.length}
         pendingLabel={`${awaiting.length} 项待派发`}
         ownerOnly
-        why="抽取出来但还没派出去的任务。「建议 XX」是抽取给的，不是已派发——派发要选一名主负责人，全部接受后任务才进入执行。"
+        why="抽取出来但还没派出去的任务。主负责人和协作者都在这里一次定下——任务负责人事后不能再拉人，只能向指定的人求助。全部被派到的人都接受，任务才进入执行。"
       >
         {awaiting.length ? (
           <div className="grid gap-2">
@@ -214,13 +231,12 @@ export default function ManagePage() {
         name="验收"
         anchor="zone-review"
         pending={toReview.length}
-        pendingLabel={`${toReview.length} 项待验收`}
-        history={{
-          count: reviewed.length,
-          open: reviewHistory,
-          toggle: () => setReviewHistory((open) => !open),
-        }}
-        why="跟 01 是同一套卡片语言，但没有排期条——验收看的是内容不是时间。验收完的收进右上角的历史，不留在这里堆着。"
+        pendingLabel={
+          reviewHistory
+            ? `已完成 ${reviewed.length} 项`
+            : `${toReview.length} 项待验收`
+        }
+        why="跟 01 是同一套卡片语言，但没有排期条——验收看的是内容不是时间。验收完的收进顶部的历史，不留在这里堆着。"
       >
         {reviewHistory ? (
           reviewed.length ? (
@@ -265,36 +281,108 @@ export default function ManagePage() {
 
 type Act = (run: () => Promise<unknown>, done: string) => Promise<void>;
 
-/** Only a task whose promise overruns the team date needs the coordinator to
- *  do anything, so an on-time row carries no button at all -- an always-there
- *  control would imply an always-there decision. */
-function teamDateActions(
-  task: Task,
-  state: ManageState,
-  act: Act,
-): CardAction[] {
+/** A task being worked on.
+ *
+ *  The only thing changeable from here is what the task *says*, and only by
+ *  the person doing it. Who owns it, who helps, and when it is due were
+ *  settled at dispatch and accepted by name; the console does not get to
+ *  reopen that quietly. Anyone else looking at a task they cannot amend sees
+ *  no button rather than a disabled one -- a control that is never usable is
+ *  just a question mark.
+ */
+function InFlightCard({
+  task,
+  me,
+  late,
+  lateDays,
+  selected,
+  cardRef,
+  onSelect,
+  act,
+}: {
+  task: Task;
+  me: string;
+  late: boolean;
+  lateDays?: number;
+  selected: boolean;
+  cardRef: (node: HTMLElement | null) => void;
+  onSelect: () => void;
+  act: Act;
+}) {
   const meta = (task.proposal_metadata || {}) as Record<string, string>;
-  const move = () => {
-    const answer = window.prompt(
-      `把「${task.title}」的团队要求时间改成（YYYY-MM-DD）：`,
-      (task.promised_by_sim_time || "").slice(0, 10),
-    );
-    if (!answer) return;
-    void act(
-      () =>
-        postJson(`/api/action-items/${task.action_item_id}/revise`, {
-          title: task.title,
-          deliverable: meta.deliverable || task.deliverable_key,
-          acceptance_criteria: meta.acceptance_criteria || "",
-          priority: meta.priority || "P1",
-          team_required_by_sim_time: `${answer}T17:00:00+10:00`,
-          message_id: messageId("revise"),
-        }),
-      "团队时间已更新，会议原文保持不变",
-    );
-  };
-  void state;
-  return [{ label: "改团队时间", run: move }];
+  const mine = task.owner_actor_id === me;
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(task.title);
+  const [deliverable, setDeliverable] = useState(meta.deliverable || "");
+
+  const actions: CardAction[] = mine
+    ? [
+        {
+          label: editing ? "收起" : "修改任务说明",
+          tone: "ghost",
+          run: () => setEditing((open) => !open),
+        },
+      ]
+    : [];
+
+  const save = () =>
+    void act(async () => {
+      await postJson(`/api/action-items/${task.action_item_id}/amend`, {
+        title,
+        deliverable,
+        message_id: messageId("amend"),
+      });
+      setEditing(false);
+    }, "已更新，正在协作的人会收到提示");
+
+  return (
+    <TaskCard
+      task={task}
+      late={late}
+      lateDays={lateDays}
+      selected={selected}
+      cardRef={cardRef}
+      onSelect={onSelect}
+      actions={actions}
+      extra={
+        editing ? (
+          <div className="mt-3 grid gap-2.5 border-t border-rule-2 pt-3">
+            <p className="text-[0.79rem] text-ink-3">
+              只改名称和说明。负责人、协作者、团队要求交付的时间都不会动——那是派发时定下、对方接受过的。
+            </p>
+            <label className="grid gap-1 text-[0.79rem]">
+              任务名称
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                className="rounded border border-rule bg-ground px-2 py-1 text-[0.82rem]"
+              />
+            </label>
+            <label className="grid gap-1 text-[0.79rem]">
+              任务说明
+              <textarea
+                rows={3}
+                value={deliverable}
+                onChange={(event) => setDeliverable(event.target.value)}
+                className="rounded border border-rule bg-ground px-2 py-1 text-[0.82rem]"
+              />
+            </label>
+            <div className="flex gap-2">
+              <Button
+                onClick={save}
+                disabled={!title.trim() || !deliverable.trim()}
+              >
+                保存并通知
+              </Button>
+              <Button tone="ghost" onClick={() => setEditing(false)}>
+                取消
+              </Button>
+            </div>
+          </div>
+        ) : null
+      }
+    />
+  );
 }
 
 /* ------------------------------------------------------------------ 02 */
@@ -314,6 +402,7 @@ function DispatchRow({
 }) {
   const [open, setOpen] = useState(false);
   const [owner, setOwner] = useState(task.owner_actor_id || "");
+  const [helpers, setHelpers] = useState<string[]>([]);
   const [when, setWhen] = useState(
     (task.team_required_by_sim_time || "").slice(0, 10),
   );
@@ -337,11 +426,11 @@ function DispatchRow({
         });
       await postJson(`/api/action-items/${task.action_item_id}/dispatch`, {
         owner_actor_id: owner,
-        collaborator_actor_ids: [],
+        collaborator_actor_ids: helpers.filter((id) => id !== owner),
         assignment_message: message,
         message_id: messageId("dispatch"),
       });
-    }, "已派发，等对方接受");
+    }, "已派发，等被派到的人全部接受");
   };
 
   return (
@@ -360,8 +449,10 @@ function DispatchRow({
         )}
       </div>
       <div className="tabular mt-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[0.71rem] text-ink-3">
-        <span>会议出处 {task.source_span || "—"}</span>
-        <span>团队时间 {formatDay(task.team_required_by_sim_time)}</span>
+        <span>
+          会议出处 <b className="font-semibold text-ink-2">{task.source_span || "—"}</b>
+        </span>
+        <span>团队要求交付 {formatDay(task.team_required_by_sim_time)}</span>
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -387,14 +478,43 @@ function DispatchRow({
               ))}
             </select>
           </label>
+          <fieldset className="grid gap-1 text-[0.79rem]">
+            <legend className="mb-1">协作者（可多选，事后不能再加）</legend>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {state.participants
+                .filter((person) => person.actor_id !== owner)
+                .map((person) => (
+                  <label
+                    key={person.actor_id}
+                    className="inline-flex items-center gap-1.5 text-[0.8rem]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={helpers.includes(person.actor_id)}
+                      onChange={(event) =>
+                        setHelpers((current) =>
+                          event.target.checked
+                            ? [...current, person.actor_id]
+                            : current.filter((id) => id !== person.actor_id),
+                        )
+                      }
+                    />
+                    {person.display_name}
+                  </label>
+                ))}
+            </div>
+          </fieldset>
           <label className="grid gap-1 text-[0.79rem]">
-            团队要求时间
+            团队要求交付
             <input
               type="date"
               value={when}
               onChange={(event) => setWhen(event.target.value)}
               className="rounded border border-rule bg-ground px-2 py-1 text-[0.82rem]"
             />
+            <span className="text-[0.74rem] text-ink-3">
+              团队需要它在哪天之前完成。对方接受时会自己给一个承诺时间，两者不一致就是工期冲突。
+            </span>
           </label>
           <label className="grid gap-1 text-[0.79rem]">
             派发说明（可选）
@@ -603,9 +723,28 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
             ? `第 ${final.revision_no} 版已于 ${formatDay(final.approved_sim_time)} 放行。`
             : remaining.length
               ? `还有 ${remaining.length} 项必需任务没验收完。`
-              : "所有必需任务已验收，等待汇总。"}
+              : "所有必需任务已验收，可以生成了。"}
         </p>
       )}
+
+      <div className="mt-5 flex flex-col items-center gap-1.5">
+        <Button
+          disabled={remaining.length > 0}
+          onClick={() =>
+            void act(
+              () => postJson("/api/final/generate", {}),
+              "验收报告已生成，等你批准放行",
+            )
+          }
+        >
+          生成验收报告
+        </Button>
+        <span className="text-[0.75rem] text-ink-3">
+          {remaining.length
+            ? `${state.tasks.filter((task) => task.required && task.status !== "REJECTED").length} 项必需任务全部验收后才能生成，还差 ${remaining.length} 项`
+            : "汇总每项任务的最新有效版本，生成后仍需一次批准才发布"}
+        </span>
+      </div>
     </Zone>
   );
 }

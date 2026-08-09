@@ -11,7 +11,6 @@ export function Zone({
   pending,
   pendingLabel,
   ownerOnly,
-  history,
   why,
   anchor,
   children,
@@ -21,7 +20,6 @@ export function Zone({
   pending: number;
   pendingLabel?: string;
   ownerOnly?: boolean;
-  history?: { count: number; open: boolean; toggle: () => void };
   why?: string;
   anchor?: string;
   children: ReactNode;
@@ -49,15 +47,6 @@ export function Zone({
           <span className="rounded border border-rule px-1.5 py-px text-[0.7rem] text-ink-3">
             仅会议负责人
           </span>
-        ) : null}
-        {history ? (
-          <button
-            onClick={history.toggle}
-            aria-pressed={history.open}
-            className="ml-auto inline-flex items-center gap-1.5 rounded border border-rule px-2 py-0.5 text-[0.76rem] text-ink-2 hover:bg-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            {history.open ? "← 返回待办" : `🕐 历史 ${history.count}`}
-          </button>
         ) : null}
       </header>
       <div className="px-4 pt-3.5 pb-4">

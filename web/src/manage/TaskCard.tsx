@@ -83,9 +83,8 @@ function statusTone(status: string): "plain" | "live" | "warn" | "ok" | "bad" {
  *  a reader cannot tell whether opening it shows a delivery, a rescheduling
  *  history, or nothing worth the click. The stage decides the wording, because
  *  the stage decides the content. */
-function disclosureLabel(task: Task, late: boolean): string {
+function disclosureLabel(task: Task): string {
   if (task.status === "PENDING_ACCEPTANCE") return "看正文与附件";
-  if (late) return "看改期经过";
   if (task.status === "TRACKING" || task.status === "BLOCKED")
     return "看执行过程";
   if (["PENDING_ASSIGNMENT", "NEEDS_REVISION", "PENDING_CONFIRMATION"].includes(task.status))
@@ -129,65 +128,91 @@ function Line({
   );
 }
 
-const EXECUTION_KINDS = new Set([
-  "PROGRESS",
-  "STATUS",
-  "INTERVENTION",
-  "ASSISTANCE",
-  "DELIVERY",
-  "ASSIGNMENT",
-]);
-
-/** Execution: what has actually happened, newest first. */
+/** Execution: everything that has happened on this task, newest first.
+ *
+ *  Nothing is filtered out. The card above stays deliberately bare, and this
+ *  is where the cost of that is paid back -- progress signals, help requests,
+ *  who else is on it, every L1/L2 nudge, and each time the promised date
+ *  moved. Splitting rescheduling into its own view made a reader open two
+ *  panels to reconstruct one story. */
 function ExecutionDetail({ task }: { task: Task }) {
-  const lines = (task.activity || []).filter((entry) =>
-    EXECUTION_KINDS.has(entry.kind),
-  );
-  if (!lines.length)
-    return <Empty>派发之后还没有任何动静——这本身就是要催办的理由。</Empty>;
+  const lines = task.activity || [];
+  const collaborators = (task.collaborators || [])
+    .map((person) => person.display_name || person.actor_id)
+    .filter(Boolean);
+  const nudges = lines.filter((entry) => entry.kind === "INTERVENTION").length;
+  const assistance = task.active_assistance;
+
   return (
-    <ul>
-      {lines.map((entry, index) => (
-        <Line
-          key={index}
-          when={entry.sim_time}
-          who={entry.actor}
-          title={entry.title}
-          detail={entry.detail}
-          tone={entry.kind === "INTERVENTION" ? "warn" : undefined}
-        />
-      ))}
-    </ul>
+    <>
+      <dl className="mb-3 grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1 text-[0.79rem]">
+        <dt className="font-mono text-[0.71rem] text-ink-3">协作者</dt>
+        <dd className="text-ink-2">
+          {collaborators.length ? collaborators.join("、") : "只有负责人一个人"}
+        </dd>
+        <dt className="font-mono text-[0.71rem] text-ink-3">排期</dt>
+        <dd className="text-ink-2">
+          团队要求 <b>{formatDay(task.team_required_by_sim_time)}</b>
+          {task.promised_by_sim_time ? (
+            <>
+              ，本人承诺 <b>{formatDay(task.promised_by_sim_time)}</b>
+            </>
+          ) : null}
+          {task.schedule_risk_reason ? `（${task.schedule_risk_reason}）` : ""}
+        </dd>
+        {nudges ? (
+          <>
+            <dt className="font-mono text-[0.71rem] text-ink-3">催办</dt>
+            <dd className="text-warn">系统已触达 {nudges} 次</dd>
+          </>
+        ) : null}
+        {assistance ? (
+          <>
+            <dt className="font-mono text-[0.71rem] text-ink-3">求助</dt>
+            <dd className="text-warn">
+              {assistance.summary || "有一条求助未解决"}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+
+      {lines.length ? (
+        <ul className="border-t border-rule-2 pt-2">
+          {lines.map((entry, index) => (
+            <Line
+              key={index}
+              when={entry.sim_time}
+              who={entry.actor}
+              title={commitmentTitle(entry)}
+              detail={commitmentDetail(entry)}
+              tone={
+                entry.kind === "INTERVENTION"
+                  ? "warn"
+                  : entry.kind === "COMMITMENT" && entry.status === "ACTIVE"
+                    ? "ok"
+                    : undefined
+              }
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="border-t border-rule-2 pt-2 text-[0.8rem] text-ink-3">
+          派发之后还没有任何动静——这本身就是要催办的理由。
+        </p>
+      )}
+    </>
   );
 }
 
-/** Rescheduling: only the promise chain, so the movement is the whole story. */
-function ScheduleDetail({ task }: { task: Task }) {
-  const chain = (task.activity || [])
-    .filter((entry: Activity) => entry.kind === "COMMITMENT")
-    .slice()
-    .reverse();
-  return (
-    <>
-      <p className="mb-2 text-[0.8rem] text-ink-2">
-        团队要求 <b>{formatDay(task.team_required_by_sim_time)}</b>，当前承诺{" "}
-        <b>{formatDay(task.promised_by_sim_time)}</b>
-        {task.schedule_risk_reason ? `——${task.schedule_risk_reason}` : ""}
-      </p>
-      <ul>
-        {chain.map((entry, index) => (
-          <Line
-            key={index}
-            when={entry.sim_time}
-            who={entry.actor}
-            title={`${entry.title}至 ${formatDay(entry.promised_deadline_sim_time)}`}
-            detail={entry.status === "SUPERSEDED" ? "后来改掉了" : "当前生效"}
-            tone={entry.status === "SUPERSEDED" ? undefined : "ok"}
-          />
-        ))}
-      </ul>
-    </>
-  );
+/** A commitment entry says more as a date than as a sentence. */
+function commitmentTitle(entry: Activity): string {
+  if (entry.kind !== "COMMITMENT") return entry.title;
+  return `${entry.title}至 ${formatDay(entry.promised_deadline_sim_time)}`;
+}
+
+function commitmentDetail(entry: Activity): string | undefined {
+  if (entry.kind !== "COMMITMENT") return entry.detail;
+  return entry.status === "SUPERSEDED" ? "后来改掉了" : "当前生效";
 }
 
 /** Delivery: the thing being judged, not a log of how it got here. */
@@ -304,6 +329,7 @@ export function TaskCard({
   actions,
   onSelect,
   cardRef,
+  extra,
 }: {
   task: Task;
   late?: boolean;
@@ -312,6 +338,9 @@ export function TaskCard({
   actions: CardAction[];
   onSelect?: () => void;
   cardRef?: (node: HTMLElement | null) => void;
+  /** Rendered below the disclosure: an inline form a zone opens on its own
+   *  terms, kept out of the card so the card does not learn about forms. */
+  extra?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const owner =
@@ -319,7 +348,6 @@ export function TaskCard({
 
   let detail: ReactNode;
   if (task.status === "PENDING_ACCEPTANCE") detail = <DeliveryDetail task={task} />;
-  else if (late) detail = <ScheduleDetail task={task} />;
   else if (task.status === "TRACKING" || task.status === "BLOCKED")
     detail = <ExecutionDetail task={task} />;
   else if (
@@ -371,13 +399,14 @@ export function TaskCard({
           aria-expanded={open}
           className="ml-auto rounded px-1 py-0.5 text-[0.76rem] text-ink-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
         >
-          {disclosureLabel(task, Boolean(late))} {open ? "▴" : "▾"}
+          {disclosureLabel(task)} {open ? "▴" : "▾"}
         </button>
       </div>
 
       {open ? (
         <div className="mt-3 border-t border-rule-2 pt-3">{detail}</div>
       ) : null}
+      {extra}
     </article>
   );
 }

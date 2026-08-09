@@ -41,7 +41,7 @@ class SingleInstanceHTTPServer(HTTPServer):
                 socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1
             )
         super().server_bind()
-from .service import CoordinationService
+from .service import NOTIFICATION_EFFECT_TYPES, CoordinationService
 
 
 WORKBENCH_HTML = r"""<!doctype html>
@@ -102,7 +102,7 @@ function citedList(title,items){if(!items?.length)return '';return `<div><b>${es
 function organizedFinal(payload){const report=payload?.organized_report;if(!report)return `<details><summary>查看原始终稿数据</summary><pre>${esc(JSON.stringify(payload,null,2))}</pre></details>`;const processing=payload.processing||{};const mode=processing.mode==='bailian'?`百炼 ${processing.model||''}`:processing.mode==='deterministic_fallback'?'本地模板（模型不可用时回退）':'本地确定性模板';return `<div class="quote"><h3>${esc(report.title)}</h3><div>${esc(report.executive_summary)}</div></div>${citedList('关键发现',report.key_findings)}${(report.sections||[]).map(section=>`<div class="activity-item"><h3>${esc(section.heading)}</h3><div><b>结论：</b>${esc(section.summary)}</div>${section.detail?`<div class="activity-detail">${esc(section.detail)}</div>`:''}${section.links?.length?`<div class="meta"><span>链接：${section.links.map(esc).join('、')}</span></div>`:''}<div class="meta"><span>来源版本：${esc(section.source_version_id)}</span><span>冻结结果：${esc(section.accepted_task_result_id)}</span></div></div>`).join('')}${citedList('风险与缺口',report.risks_or_gaps)}${citedList('建议下一步',report.recommended_next_steps)}<div class="meta"><span>整理方式：${esc(mode)}</span>${processing.fallback_reason?`<span>回退原因：${esc(processing.fallback_reason)}</span>`:''}</div><details><summary>查看原始交付与处理数据</summary><pre>${esc(JSON.stringify(payload,null,2))}</pre></details>`}
 function processingStatus(d){const p=d.result_processing||{},job=p.job;if(!p.automatic)return '<div class="notice error">部署策略已关闭自动结果整理。</div>';const mode=p.mode==='bailian'?'百炼受约束 Prompt':'本地确定性模板';if(!job)return `<div class="notice">自动整理已启用：${esc(mode)}；系统会在全部必需任务验收后主动执行。</div>`;const labels={PENDING:'等待处理',CLAIMED:'处理中',RETRY_WAIT:'等待自动重试',DELIVERED:'处理完成',DEAD_LETTER:'重试耗尽'};const latest=job.latest_event?.payload||{};return `<div class="notice ${job.status==='DEAD_LETTER'?'error':''}"><b>自动整理：${esc(labels[job.status]||job.status)}</b><div class="meta"><span>方式：${esc(mode)}</span><span>尝试：${esc(job.attempt_count)}</span>${latest.error?`<span>原因：${esc(latest.error)}</span>`:''}</div></div>`}
 function finalCard(d,canAggregate){const status=processingStatus(d);if(canAggregate)return `${status}<div>全部必需交付均已验收，系统正在主动读取正文与附件并整理终稿，无需人工触发。</div>`;if(!d.final)return `${status}<div class="empty">全部必需交付验收通过后将自动整理终稿</div>`;const review=d.final.release_review;const rejected=review?.status==='REJECTED'?`<div class="notice error"><b>终稿未发布</b><div>${esc(review.comment)}</div><div class="muted">请让对应执行人提交新版本并重新验收；系统会自动废止本稿并生成下一修订。</div></div>`:'';return `${status}${rejected}<div class="row between"><b>终稿修订 ${esc(d.final.revision_no)}</b><span class="pill">${esc(d.final.status)}</span></div><div class="meta"><span>${d.lineage.length} 条原始字段来源记录</span></div>${organizedFinal(d.final.payload||{})}`}
-function toggleAssignmentPopover(){document.querySelector('#assignment-popover')?.classList.toggle('hidden')}
+function toggleAssignmentPopover(){const box=document.querySelector('#assignment-popover');if(!box)return;box.classList.toggle('hidden');if(!box.classList.contains('hidden')){markNoticesSeen();renderAssignmentBell(state);document.querySelector('#assignment-popover')?.classList.remove('hidden')}}
 // Clicking away closes it. Without this the panel covers the task list and the
 // only way out is the bell, which is not where anyone looks first.
 document.addEventListener('click',e=>{const panel=document.querySelector('#assignment-popover');if(!panel||panel.classList.contains('hidden'))return;if(panel.contains(e.target)||e.target.closest('.bell'))return;panel.classList.add('hidden')});
@@ -110,7 +110,14 @@ document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;document.quer
 function toggleOtherReason(id){const picked=String(field(`assignment-${id}-reason`)||'');const box=document.querySelector(`#other-reason-${id}`);if(box)box.classList.toggle('hidden',picked!==OTHER_REASON)}
 function returnReasonFor(id){const picked=String(field(`assignment-${id}-reason`)||'').trim();if(picked===OTHER_REASON)return String(field(`assignment-${id}-other`)||'').trim();return picked}
 async function respondAssignment(id,decision){const note=String(field(`assignment-${id}-message`)||'').trim();const response_message=decision==='RETURN_FOR_REVISION'?returnReasonFor(id):note;if(decision==='RETURN_FOR_REVISION'&&!response_message){const picked=String(field(`assignment-${id}-reason`)||'');flash(picked===OTHER_REASON?'选择“其他”时请填写退回原因':'退回重改时请先选择退回原因',true);return}try{await post(`/api/action-items/${id}/assignment-response`,{decision,response_message,message_id:uid()});clearDraftPrefix(`assignment-${id}`);flash(decision==='ACCEPT'?'已接受派发；全部成员接受后任务开始执行':'已退回负责人修改；本轮其他响应已经失效');await load(true)}catch(e){flash(e.message,true)}}
-function renderAssignmentBell(d){const host=document.querySelector('#assignment-notice');if(!host)return;const pending=(d.tasks||[]).filter(t=>t.status==='PENDING_ASSIGNMENT'&&t.my_assignment?.response_status==='PENDING');const votes=(d.tasks||[]).filter(awaitsMyVote),ballots=(d.tasks||[]).filter(awaitsMyBallot);const total=pending.length+votes.length+ballots.length;if(route!=='tasks'){host.innerHTML='';return}host.innerHTML=`<button class="bell" aria-label="待我响应的事项" onclick="toggleAssignmentPopover()">🔔${total?`<span class="bell-count">${total}</span>`:''}</button><div id="assignment-popover" class="assignment-popover hidden"><div class="row between"><b>待我响应</b><span class="pill">${total} 项</span></div>${pending.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill">${t.my_assignment.assignment_role==='OWNER'?'主负责人':'协作者'}</span></div><div class="muted">${esc(t.my_assignment.assignment_message||'负责人未补充派发留言')}</div><div class="meta"><span>团队需要：${esc(localTime(t.team_required_by_sim_time))}</span><span>任务版本：v${esc(t.definition_version)}</span></div><label>回应留言（接受时可不填）</label><textarea data-draft="assignment-${t.action_item_id}-message">${esc(draft(`assignment-${t.action_item_id}-message`))}</textarea><label>退回原因（退回时必选）</label><select data-draft="assignment-${t.action_item_id}-reason" onchange="toggleOtherReason('${t.action_item_id}')"><option value="">请选择退回原因</option>${RETURN_REASONS.concat([OTHER_REASON]).map(r=>`<option value="${esc(r)}"${draft(`assignment-${t.action_item_id}-reason`)===r?' selected':''}>${esc(r)}</option>`).join('')}</select><div id="other-reason-${t.action_item_id}" class="${draft(`assignment-${t.action_item_id}-reason`)===OTHER_REASON?'':'hidden'}"><label>请填写退回原因</label><textarea data-draft="assignment-${t.action_item_id}-other">${esc(draft(`assignment-${t.action_item_id}-other`))}</textarea></div><div class="actions"><button class="good" onclick="respondAssignment('${t.action_item_id}','ACCEPT')">接受</button><button class="danger" onclick="respondAssignment('${t.action_item_id}','RETURN_FOR_REVISION')">退回重改</button></div></article>`).join('')}${ballots.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill warn">待整理候选</span></div><div class="muted">上游问题清单已全部验收，可以生成候选并发起投票。</div><div class="actions"><button onclick="focusTask('${t.action_item_id}')">去整理</button></div></article>`).join('')}${votes.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill warn">待我打分</span></div><div class="muted">候选问题已发布，所有指定投票人完成后才解锁定稿提交。</div><div class="actions"><button onclick="focusTask('${t.action_item_id}')">去打分</button></div></article>`).join('')}${total?'':'<div class="empty">当前没有需要回应的事项</div>'}</div>`}
+// Notices that ask nothing still have to be seen once. There is no read model
+// in the domain for that -- and inventing one would put a UI concern into the
+// audit trail -- so "seen" lives in this browser: opening the popover records
+// the newest notice, and anything after it is what the badge counts.
+function seenNoticeKey(){return `seenNotice:${state?.principal?.actor_id||''}`}
+function unseenNotices(d){const all=(d.notices||[]).filter(n=>!n.decides);const seen=localStorage.getItem(seenNoticeKey())||'';if(!seen)return all;const at=all.findIndex(n=>n.notice_id===seen);return at<0?all:all.slice(0,at)}
+function markNoticesSeen(){const newest=(state?.notices||[]).filter(n=>!n.decides)[0];if(newest)localStorage.setItem(seenNoticeKey(),newest.notice_id)}
+function renderAssignmentBell(d){const host=document.querySelector('#assignment-notice');if(!host)return;const pending=(d.tasks||[]).filter(t=>t.status==='PENDING_ASSIGNMENT'&&t.my_assignment?.response_status==='PENDING');const votes=(d.tasks||[]).filter(awaitsMyVote),ballots=(d.tasks||[]).filter(awaitsMyBallot);const notices=unseenNotices(d);const total=pending.length+votes.length+ballots.length+notices.length;if(route!=='tasks'){host.innerHTML='';return}host.innerHTML=`<button class="bell" aria-label="待我响应的事项" onclick="toggleAssignmentPopover()">🔔${total?`<span class="bell-count">${total}</span>`:''}</button><div id="assignment-popover" class="assignment-popover hidden"><div class="row between"><b>待我响应</b><span class="pill">${total} 项</span></div>${pending.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill">${t.my_assignment.assignment_role==='OWNER'?'主负责人':'协作者'}</span></div><div class="muted">${esc(t.my_assignment.assignment_message||'负责人未补充派发留言')}</div><div class="meta"><span>团队需要：${esc(localTime(t.team_required_by_sim_time))}</span><span>任务版本：v${esc(t.definition_version)}</span></div><label>回应留言（接受时可不填）</label><textarea data-draft="assignment-${t.action_item_id}-message">${esc(draft(`assignment-${t.action_item_id}-message`))}</textarea><label>退回原因（退回时必选）</label><select data-draft="assignment-${t.action_item_id}-reason" onchange="toggleOtherReason('${t.action_item_id}')"><option value="">请选择退回原因</option>${RETURN_REASONS.concat([OTHER_REASON]).map(r=>`<option value="${esc(r)}"${draft(`assignment-${t.action_item_id}-reason`)===r?' selected':''}>${esc(r)}</option>`).join('')}</select><div id="other-reason-${t.action_item_id}" class="${draft(`assignment-${t.action_item_id}-reason`)===OTHER_REASON?'':'hidden'}"><label>请填写退回原因</label><textarea data-draft="assignment-${t.action_item_id}-other">${esc(draft(`assignment-${t.action_item_id}-other`))}</textarea></div><div class="actions"><button class="good" onclick="respondAssignment('${t.action_item_id}','ACCEPT')">接受</button><button class="danger" onclick="respondAssignment('${t.action_item_id}','RETURN_FOR_REVISION')">退回重改</button></div></article>`).join('')}${ballots.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill warn">待整理候选</span></div><div class="muted">上游问题清单已全部验收，可以生成候选并发起投票。</div><div class="actions"><button onclick="focusTask('${t.action_item_id}')">去整理</button></div></article>`).join('')}${votes.map(t=>`<article class="card"><div class="row between"><b>${esc(t.title)}</b><span class="pill warn">待我打分</span></div><div class="muted">候选问题已发布，所有指定投票人完成后才解锁定稿提交。</div><div class="actions"><button onclick="focusTask('${t.action_item_id}')">去打分</button></div></article>`).join('')}${notices.map(n=>`<article class="card"><div class="row between"><b>${esc(n.title)}</b><span class="pill">通知</span></div><div class="muted">${esc(n.summary)}</div>${(n.fields||[]).map(f=>`<div class="meta"><span>${esc(f.label)}：${esc(f.value)}</span></div>`).join('')}<div class="actions"><button onclick="focusTask('${n.action_item_id}')">去看任务</button></div></article>`).join('')}${total?'':'<div class="empty">当前没有需要回应的事项</div>'}</div>`}
 function focusTask(id){selectedTaskId=id;toggleAssignmentPopover();render(state);document.querySelector('.task-focus')?.scrollIntoView({behavior:'smooth',block:'start'})}
 async function revisePersonalCommitment(id){const local=field(`deadline-${id}-value`),reason=field(`deadline-${id}-reason`);if(!local){flash('请填写新的个人承诺时间',true);return}try{await post(`/api/action-items/${id}/personal-commitment`,{proposed_deadline_sim_time:new Date(local).toISOString(),reason,message_id:uid()});clearDraftPrefix(`deadline-${id}`);flash('个人承诺已更新；团队需要时间未改变');await load(true)}catch(e){flash(e.message,true)}}
 const fileSizeLabel=bytes=>bytes>=1024*1024?`${(bytes/1024/1024).toFixed(1)}MB`:`${Math.max(1,Math.round(bytes/1024))}KB`;
@@ -1165,9 +1172,48 @@ def workbench_state(
             for task in progress_tasks
         ),
     }
+    # Notices addressed to whoever is looking.
+    #
+    # The bell used to be derived entirely from `tasks`, which meant it could
+    # only ever show things that ask the reader for a decision. A task whose
+    # description changed under someone asks for nothing and still has to
+    # reach them, so it is read off the Outbox -- the same row Feishu delivers,
+    # rather than a second channel that could disagree with it.
+    notices: list[dict[str, Any]] = []
+    if principal is not None:
+        for row in db.all(
+            "SELECT outbox_id, effect_id, effect_type, action_item_id, payload, "
+            "created_sim_time FROM outbox_entries WHERE episode_id = ? "
+            "AND effect_type IN "
+            f"({','.join('?' * len(NOTIFICATION_EFFECT_TYPES))}) "
+            "ORDER BY created_sim_time DESC, outbox_id DESC LIMIT 60",
+            (episode["episode_id"], *sorted(NOTIFICATION_EFFECT_TYPES)),
+        ):
+            payload = _decode_json(row["payload"]) or {}
+            if principal.actor_id not in (payload.get("recipient_actor_ids") or []):
+                continue
+            notification = payload.get("notification") or {}
+            notices.append(
+                {
+                    "notice_id": row["effect_id"],
+                    "kind": row["effect_type"],
+                    "action_item_id": row["action_item_id"],
+                    "title": notification.get("title", ""),
+                    "summary": notification.get("summary", ""),
+                    "fields": notification.get("fields", []),
+                    "sim_time": row["created_sim_time"],
+                    # A notice offering a decision is already surfaced by the
+                    # task list; flagged so the bell does not show it twice.
+                    "decides": bool(notification.get("decisions")),
+                }
+            )
+            if len(notices) >= 12:
+                break
+
     state = {
         "episode": dict(episode),
         "tasks": tasks,
+        "notices": notices,
         "pending_approvals": approvals,
         "final": final,
         "lineage": lineage,
@@ -1524,7 +1570,7 @@ def serve_dashboard(
 
     approval_path = re.compile(r"^/api/approvals/([^/]+)$")
     action_path = re.compile(
-        r"^/api/action-items/([^/]+)/(revise|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote)$"
+        r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote)$"
     )
     collaboration_structure_path = re.compile(
         r"^/api/collaboration-structures/question-vote$"
@@ -1535,6 +1581,7 @@ def serve_dashboard(
     assistance_path = re.compile(
         r"^/api/assistance/([^/]+)/(acknowledge|resolve|cancel)$"
     )
+    final_generate_path = re.compile(r"^/api/final/generate$")
     memory_declare_path = re.compile(r"^/api/memories/declare$")
     memory_path = re.compile(
         r"^/api/memories/([^/]+)/(confirm|replace|reject)$"
@@ -1720,6 +1767,7 @@ def serve_dashboard(
                     )
                 return
             approval_match = approval_path.match(parsed.path)
+            final_generate_match = final_generate_path.match(parsed.path)
             action_match = action_path.match(parsed.path)
             collaboration_structure_match = collaboration_structure_path.match(
                 parsed.path
@@ -1737,6 +1785,7 @@ def serve_dashboard(
             artifact_retry_match = artifact_retry_path.match(parsed.path)
             if (
                 not approval_match
+                and not final_generate_match
                 and not action_match
                 and not collaboration_structure_match
                 and not structure_revoke_match
@@ -1761,6 +1810,44 @@ def serve_dashboard(
                         approve=bool(payload.get("approve")),
                         comment=payload.get("comment", ""),
                     )
+                    service.dispatch_all(session_id="workbench_dispatcher")
+                elif final_generate_match:
+                    authorization.require_coordinator(principal)
+                    # `aggregate` itself will happily summarise a half-finished
+                    # meeting -- `eval` and the CLI rely on that. Asking for a
+                    # final from the console means something narrower: that the
+                    # work is done. Refusing here keeps that promise without
+                    # taking the looser behaviour away from the other callers,
+                    # and it is a real refusal rather than a greyed-out button
+                    # somebody can POST straight past.
+                    outstanding = [
+                        dict(row)["title"]
+                        for row in service.db.all(
+                            "SELECT title FROM action_items WHERE episode_id = ? "
+                            "AND required = TRUE AND status NOT IN "
+                            "('ACCEPTED','AGGREGATED','ARCHIVED','REJECTED') "
+                            "ORDER BY action_item_id",
+                            (service.episode_id,),
+                        )
+                    ]
+                    if outstanding:
+                        self._json(
+                            409,
+                            {
+                                "error": "TASKS_OUTSTANDING",
+                                "message": (
+                                    f"还有 {len(outstanding)} 项必需任务没验收完："
+                                    + "、".join(outstanding[:3])
+                                    + ("…" if len(outstanding) > 3 else "")
+                                ),
+                                "outstanding": outstanding,
+                            },
+                        )
+                        return
+                    result = {
+                        "final_deliverable_id": service.aggregate(),
+                        "outstanding": [],
+                    }
                     service.dispatch_all(session_id="workbench_dispatcher")
                 elif collaboration_structure_match:
                     authorization.require_coordinator(principal)
@@ -1864,6 +1951,18 @@ def serve_dashboard(
                             management_review_policy=payload.get(
                                 "management_review_policy"
                             ),
+                        )
+                    elif operation == "amend":
+                        # No coordinator check: the service requires the caller
+                        # to be the task's own owner, which the coordinator is
+                        # not unless the task was dispatched to them.
+                        authorization.require_participant(principal)
+                        result = service.amend_task_description(
+                            action_id,
+                            actor_id=principal.actor_id,
+                            title=payload.get("title", ""),
+                            deliverable=payload.get("deliverable", ""),
+                            message_id=message_id,
                         )
                     elif operation == "dispatch":
                         authorization.require_coordinator(principal)

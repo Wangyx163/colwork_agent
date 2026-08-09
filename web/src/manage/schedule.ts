@@ -11,17 +11,20 @@ const DAY = 86_400_000;
  *  separate fields here rather than one range. */
 export interface Row {
   task: Task;
+  owner: string;
   /** 0–1 positions across the shared window. */
   start: number;
   promised: number | null;
   required: number | null;
   /** Superseded promises, oldest first: where this person used to stand. */
   ghosts: number[];
-  /** The promise runs past what the team needs -- the bar grows a warn tail. */
+  /** The promise runs past what the team needs. */
   late: boolean;
   /** Days late, positive only. Rounded to whole days like the deadlines are. */
   lateDays: number;
   done: boolean;
+  /** Already past its team date without being finished. */
+  overdue: boolean;
 }
 
 export interface Strip {
@@ -62,43 +65,39 @@ const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
  *  other, and a bar that means a different number of days on every line would
  *  make that comparison a lie.
  *
- *  The window is fitted to the data but never narrower than `minDays`, so a
- *  meeting whose deadlines all fall on one afternoon does not blow up into a
- *  strip where an hour reads as a week. */
+ *  The window opens at *now* -- what is being read here is what remains, and
+ *  the day a task was dispatched changes nothing a coordinator can act on. It
+ *  only reaches back further when something is already overdue, because a
+ *  deadline that has passed has to stay visible to be acted on; then the
+ *  vertical mark sits inside the strip rather than on its left edge, and the
+ *  distance behind it is exactly how late things are. */
 export function buildStrip(
   tasks: Task[],
   nowIso: string | null | undefined,
   minDays = 7,
 ): Strip {
-  const instants: number[] = [];
+  const now = ms(nowIso) ?? Date.now();
+  const instants: number[] = [now];
   const prepared = tasks.map((task) => {
-    const start =
-      ms(task.activity?.[task.activity.length - 1]?.sim_time) ??
-      ms(task.deadline_sim_time) ??
-      Date.now();
     const promised = ms(task.promised_by_sim_time);
     const required = ms(task.team_required_by_sim_time);
     const ghosts = supersededPromises(task);
-    instants.push(start, ...ghosts);
+    instants.push(...ghosts);
     if (promised !== null) instants.push(promised);
     if (required !== null) instants.push(required);
-    return { task, start, promised, required, ghosts };
+    return { task, promised, required, ghosts };
   });
 
-  const now = ms(nowIso);
-  if (now !== null) instants.push(now);
-  if (!instants.length) return { rows: [], ticks: [], now: null };
+  if (!prepared.length) return { rows: [], ticks: [], now: null };
 
   let low = Math.min(...instants);
   let high = Math.max(...instants);
-  // Pad to whole days so the ticks land on midnights a reader recognises.
   low = Math.floor(low / DAY) * DAY;
   high = Math.ceil(high / DAY) * DAY;
-  const shortfall = minDays * DAY - (high - low);
-  if (shortfall > 0) {
-    low -= Math.floor(shortfall / 2);
-    high += Math.ceil(shortfall / 2);
-  }
+  // Only ever widen to the right: pushing `low` earlier would move the
+  // now-mark off the left edge for no reason, and that mark is the origin
+  // every bar is read from.
+  if (high - low < minDays * DAY) high = low + minDays * DAY;
   const span = high - low || DAY;
   const at = (value: number) => (value - low) / span;
 
@@ -116,23 +115,30 @@ export function buildStrip(
   }
 
   const rows: Row[] = prepared.map(
-    ({ task, start, promised, required, ghosts }) => {
+    ({ task, promised, required, ghosts }) => {
       const late =
         promised !== null && required !== null && promised > required;
+      const done = DONE.has(task.status);
       return {
         task,
-        start: at(start),
+        owner:
+          task.assigned_owner_display_name ||
+          task.owner_display_name ||
+          "未指派",
+        // Every bar starts at now: it is the remaining runway that matters.
+        start: at(Math.min(now, promised ?? now, required ?? now)),
         promised: promised === null ? null : at(promised),
         required: required === null ? null : at(required),
         ghosts: ghosts.map(at),
         late,
         lateDays: late ? Math.round((promised! - required!) / DAY) : 0,
-        done: DONE.has(task.status),
+        done,
+        overdue: !done && required !== null && required < now,
       };
     },
   );
 
-  return { rows, ticks, now: now === null ? null : at(now) };
+  return { rows, ticks, now: at(now) };
 }
 
 export function formatDay(value: string | null | undefined): string {
@@ -140,4 +146,15 @@ export function formatDay(value: string | null | undefined): string {
   if (parsed === null) return "——";
   const instant = new Date(parsed);
   return `${instant.getMonth() + 1}/${String(instant.getDate()).padStart(2, "0")}`;
+}
+
+/** The task's own description, for the tooltip.
+ *
+ *  Repeating the title there would say nothing the row does not already show. */
+export function describe(task: Task): string {
+  const meta = (task.proposal_metadata || {}) as Record<string, string>;
+  const text =
+    meta.deliverable || meta.work_requirements || task.deliverable_key || "";
+  const criteria = meta.acceptance_criteria;
+  return criteria ? `${text}\n验收标准：${criteria}` : text;
 }

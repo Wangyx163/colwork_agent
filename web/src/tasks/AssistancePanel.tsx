@@ -31,7 +31,12 @@ export function AssistancePanel({
   return (
     <div className="mt-3 grid gap-2 border-t border-rule-2 pt-3">
       {open.map((request) => (
-        <Row key={request.assistance_id} request={request} me={me} act={act} />
+        <Row
+          key={request.assistance_request_id}
+          request={request}
+          me={me}
+          act={act}
+        />
       ))}
     </div>
   );
@@ -48,8 +53,8 @@ function Row({
 }) {
   const [summary, setSummary] = useState("");
   const [closing, setClosing] = useState(false);
-  const mine = request.requested_by_actor_id === me;
-  const target = (request as { target_actor_id?: string }).target_actor_id === me;
+  const mine = request.requester_actor_id === me;
+  const target = request.target_actor_id === me;
   const acknowledged = request.status === "ACKNOWLEDGED";
 
   // Literal paths, not a verb glued on: a URL built from a variable is
@@ -61,7 +66,7 @@ function Row({
       setClosing(false);
       setSummary("");
     }, done);
-  const id = request.assistance_id;
+  const id = request.assistance_request_id;
 
   return (
     <div className="rounded border border-warn bg-warn-wash px-3 py-2.5">
@@ -70,6 +75,9 @@ function Row({
           {request.summary || "有人在这个任务上求助"}
         </b>
         <Chip tone="warn">{acknowledged ? "有人接手了" : "还没人接"}</Chip>
+        <span className="font-mono text-[0.68rem] text-ink-3">
+          {request.requester_display_name} → {request.target_display_name}
+        </span>
       </div>
 
       <div className="mt-2 flex flex-wrap gap-2">

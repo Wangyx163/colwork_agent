@@ -128,16 +128,24 @@ export interface Assignment {
   definition_version?: number;
 }
 
+/** Field names copied out of a real projection, not imagined. The id is
+ *  `assistance_request_id` and the asker is `requester_actor_id`; the shorter
+ *  spellings that read naturally are not the ones the server sends, and
+ *  reading them yields undefined -- which typechecks, renders, and produces a
+ *  request to /api/assistance/undefined/acknowledge. */
 export interface AssistanceRequest {
-  assistance_id: string;
+  assistance_request_id: string;
   action_item_id: string;
-  status: string;
+  status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "CANCELLED";
   summary?: string;
   category?: string;
-  requested_by_actor_id?: string;
+  requester_actor_id?: string;
+  requester_display_name?: string;
   target_actor_id?: string;
-  requested_sim_time?: string;
-  resolution_summary?: string;
+  target_display_name?: string;
+  created_sim_time?: string;
+  resolution_summary?: string | null;
+  resolved_sim_time?: string | null;
 }
 
 export interface Notice {

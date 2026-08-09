@@ -50,6 +50,7 @@ NOTIFY_REVIEW_DECIDED = "REVIEW_DECIDED"
 NOTIFY_ASSISTANCE_REQUESTED = "ASSISTANCE_REQUESTED"
 NOTIFY_RESULT_PENDING_REVIEW = "RESULT_PENDING_REVIEW"
 NOTIFY_TASK_AMENDED = "TASK_AMENDED"
+NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
 #: The two things a task owner may change about their own task, in the words
 #: a reader uses for them rather than the column names.
 AMENDABLE_FIELD_NAMES = {"title": "任务名称", "deliverable": "任务说明"}
@@ -61,6 +62,7 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_ASSISTANCE_REQUESTED,
         NOTIFY_RESULT_PENDING_REVIEW,
         NOTIFY_TASK_AMENDED,
+        NOTIFY_ASSISTANCE_RESOLVED,
     }
 )
 
@@ -4030,11 +4032,52 @@ class CoordinationService:
                 },
                 correlation_id=correlation_id,
             )
+            if new_status == "RESOLVED":
+                # Whoever asked has been waiting on this, and until now closing
+                # it was silent: the helper marked it done and the person who
+                # was blocked found out by opening the page and noticing. The
+                # resolution travels with the message, because "it is handled"
+                # without saying how is not an answer.
+                owner = cursor.execute(
+                    "SELECT owner_actor_id, title FROM action_items "
+                    "WHERE action_item_id = ?",
+                    (request["action_item_id"],),
+                ).fetchone()
+                helper = cursor.execute(
+                    "SELECT display_name FROM actors WHERE actor_id = ?",
+                    (actor_id,),
+                ).fetchone()
+                audience = [
+                    request["requester_actor_id"],
+                    owner["owner_actor_id"] if owner else None,
+                ]
+                self._notify(
+                    cursor,
+                    effect_type=NOTIFY_ASSISTANCE_RESOLVED,
+                    recipient_actor_ids=[
+                        person
+                        for person in dict.fromkeys(audience)
+                        if person and person != actor_id
+                    ],
+                    action_item_id=request["action_item_id"],
+                    title=f'{helper["display_name"]} 处理完了你的求助',
+                    summary=resolution_summary,
+                    fields=[
+                        {"label": "任务", "value": owner["title"] if owner else ""},
+                        {"label": "原来问的", "value": request["summary"] or ""},
+                    ],
+                    decisions=[],
+                    correlation_id=correlation_id,
+                    sim_time=sim_time,
+                    trigger_key=f"{assistance_request_id}:resolved",
+                    subject_id=assistance_request_id,
+                )
             result = {
                 "assistance_request_id": assistance_request_id,
                 "action_item_id": request["action_item_id"],
                 "status": new_status,
                 "updated_sim_time": sim_time,
+                "resolution_summary": resolution_summary,
             }
             self._record_inbound(
                 cursor, message_id=message_id, result=result, sim_time=sim_time

@@ -8,7 +8,10 @@ from pathlib import Path
 
 from collab_agent.meeting import load_meeting_service
 from collab_agent.models import parse_time
-from collab_agent.service import NOTIFY_TASK_AMENDED
+from collab_agent.service import (
+    NOTIFY_ASSISTANCE_RESOLVED,
+    NOTIFY_TASK_AMENDED,
+)
 from collab_agent.store import Database
 
 
@@ -417,3 +420,147 @@ class TaskAmendmentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AssistanceResolutionTests(unittest.TestCase):
+    """Closing a help request has to reach the person who was blocked.
+
+    Marking it resolved used to be silent: the helper finished, and whoever
+    had been waiting found out by opening the page and noticing. The
+    resolution travels with the message, because "it is handled" without
+    saying how is not an answer.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        extraction = root / "extraction.json"
+        transcript = root / "transcript.txt"
+        extraction.write_text(
+            json.dumps(extraction_payload(), ensure_ascii=False), encoding="utf-8"
+        )
+        transcript.write_text("主持人(00:01:00): 请整理会议纪要\n", encoding="utf-8")
+        self.db = Database(":memory:")
+        self.addCleanup(self.db.close)
+        self.db.initialize()
+        self.service = load_meeting_service(
+            self.db,
+            extraction_path=extraction,
+            transcript_path=transcript,
+            organization_name="求助测试团队",
+            coordinator_name="会议负责人",
+            participant_names=["同事甲", "同事乙"],
+        )
+        self.coordinator = self.service.aggregator_actor_id
+        self.actors = {
+            row["display_name"]: row["actor_id"]
+            for row in self.db.all(
+                "SELECT a.actor_id, a.display_name FROM actors a "
+                "JOIN episode_participants ep ON ep.actor_id = a.actor_id "
+                "WHERE ep.episode_id = ? AND ep.role = 'PARTICIPANT'",
+                (self.service.episode_id,),
+            )
+        }
+        action = next(iter(self.service.action_items()))
+        self.action_id = action["action_item_id"]
+        self.service.revise_action_proposal(
+            self.action_id,
+            actor_id=self.coordinator,
+            title=action["title"],
+            deliverable="会议纪要",
+            acceptance_criteria="结论清晰",
+            priority="P1",
+            team_required_by_sim_time=(
+                parse_time(self.service.now()) + timedelta(days=2)
+            ).isoformat(),
+            message_id="help-prepare",
+        )
+        self.service.dispatch_action(
+            self.action_id,
+            actor_id=self.coordinator,
+            owner_actor_id=self.actors["同事甲"],
+            collaborator_actor_ids=[],
+            assignment_message="",
+            message_id="help-dispatch",
+        )
+        self.service.respond_to_assignment(
+            self.action_id,
+            actor_id=self.actors["同事甲"],
+            decision="ACCEPT",
+            response_message="",
+            message_id="help-accept",
+        )
+        self.request_id = self.service.request_assistance(
+            self.action_id,
+            actor_id=self.actors["同事甲"],
+            target_actor_id=self.actors["同事乙"],
+            category="EXPERTISE",
+            summary="这块要你看一下",
+            message_id="help-ask",
+        )["assistance_request_id"]
+        self.service.update_assistance(
+            self.request_id,
+            actor_id=self.actors["同事乙"],
+            action="acknowledge",
+            resolution_summary="",
+            message_id="help-ack",
+        )
+
+    def resolved(self) -> list[dict]:
+        return [
+            dict(row)
+            for row in self.db.all(
+                "SELECT * FROM outbox_entries WHERE episode_id = ? "
+                "AND effect_type = ?",
+                (self.service.episode_id, NOTIFY_ASSISTANCE_RESOLVED),
+            )
+        ]
+
+    def test_resolving_tells_whoever_was_blocked(self) -> None:
+        self.service.update_assistance(
+            self.request_id,
+            actor_id=self.actors["同事乙"],
+            action="resolve",
+            resolution_summary="一起看过了，用第二个方案",
+            message_id="help-resolve",
+        )
+
+        entries = self.resolved()
+        self.assertEqual(len(entries), 1)
+        payload = json.loads(entries[0]["payload"])
+        self.assertIn(self.actors["同事甲"], payload["recipient_actor_ids"])
+        self.assertNotIn(
+            self.actors["同事乙"],
+            payload["recipient_actor_ids"],
+            "the helper does not need telling what they just did",
+        )
+
+    def test_the_message_carries_the_resolution_not_just_the_fact(self) -> None:
+        self.service.update_assistance(
+            self.request_id,
+            actor_id=self.actors["同事乙"],
+            action="resolve",
+            resolution_summary="一起看过了，用第二个方案",
+            message_id="help-resolve-2",
+        )
+
+        notification = json.loads(self.resolved()[0]["payload"])["notification"]
+
+        self.assertEqual(notification["summary"], "一起看过了，用第二个方案")
+        self.assertEqual(
+            notification["decisions"], [], "nothing is being asked of the reader"
+        )
+
+    def test_a_resolution_still_has_to_say_something(self) -> None:
+        """The page fills this in from the submission when there is one, so an
+        empty resolution means nobody said anything anywhere."""
+
+        with self.assertRaises(ValueError):
+            self.service.update_assistance(
+                self.request_id,
+                actor_id=self.actors["同事乙"],
+                action="resolve",
+                resolution_summary="",
+                message_id="help-empty",
+            )

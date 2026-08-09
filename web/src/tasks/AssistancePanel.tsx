@@ -28,6 +28,19 @@ export function AssistancePanel({
     (request) => request.status === "OPEN" || request.status === "ACKNOWLEDGED",
   );
   if (!open.length) return null;
+  // Once the work has been handed in, "how did it end" is already written
+  // down: the submission is the answer. Asking the helper to retype it in a
+  // box before they may close the request is make-work, so the delivery
+  // stands in as the resolution and the person who asked is told with it.
+  const delivered = task.latest_version || task.current_version;
+  const fromDelivery = delivered
+    ? [
+        delivered.payload?.summary,
+        delivered.payload?.completion_note,
+      ]
+        .filter(Boolean)
+        .join("；")
+    : "";
   return (
     <div className="mt-3 grid gap-2 border-t border-rule-2 pt-3">
       {open.map((request) => (
@@ -36,6 +49,7 @@ export function AssistancePanel({
           request={request}
           me={me}
           act={act}
+          delivered={fromDelivery ? `成果已提交：${fromDelivery}` : ""}
         />
       ))}
     </div>
@@ -46,10 +60,13 @@ function Row({
   request,
   me,
   act,
+  delivered,
 }: {
   request: AssistanceRequest;
   me: string;
   act: Act;
+  /** The submitted result, when there is one, ready to close the request. */
+  delivered: string;
 }) {
   const [summary, setSummary] = useState("");
   const [closing, setClosing] = useState(false);
@@ -89,8 +106,19 @@ function Row({
           </Button>
         ) : null}
         {target && acknowledged ? (
-          <Button tone="good" onClick={() => setClosing((open) => !open)}>
-            标记解决
+          <Button
+            tone="good"
+            onClick={() => {
+              if (delivered)
+                send(
+                  `/api/assistance/${id}/resolve`,
+                  { resolution_summary: delivered },
+                  "已解决，成果一并转给发起人",
+                );
+              else setClosing((open) => !open);
+            }}
+          >
+            {delivered ? "标记解决" : closing ? "收起" : "标记解决"}
           </Button>
         ) : null}
         {mine ? (

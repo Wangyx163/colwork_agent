@@ -46,6 +46,7 @@ class SingleInstanceHTTPServer(HTTPServer):
             )
         super().server_bind()
 from .service import NOTIFICATION_EFFECT_TYPES, CoordinationService
+from .user_messages import user_message
 
 
 # The server-rendered workbench used to live here. Every surface it drew
@@ -1986,7 +1987,7 @@ def serve_dashboard(
                 )
                 self._json(
                     403,
-                    {"error": "AUTHORIZATION", "message": str(error)},
+                    {"error": "AUTHORIZATION", "message": user_message(error)},
                 )
             except PermissionError as error:
                 self._audit_rejection(
@@ -1997,7 +1998,7 @@ def serve_dashboard(
                 )
                 self._json(
                     403,
-                    {"error": "AUTHORIZATION", "message": str(error)},
+                    {"error": "AUTHORIZATION", "message": user_message(error)},
                 )
             except RequestTooLarge as error:
                 self._audit_rejection(
@@ -2011,14 +2012,17 @@ def serve_dashboard(
                     {"error": "PAYLOAD_TOO_LARGE", "message": str(error)},
                 )
             except (KeyError, ValueError) as error:
-                message = str(error)
+                # Conflict is decided on the English the domain raised, not on
+                # the sentence shown to the reader: the status code is part of
+                # the API and must not move when a translation is reworded.
+                raw = str(error)
                 conflict = any(
-                    token in message
+                    token in raw
                     for token in ("already", "claimed", "competing", "published")
                 )
                 self._json(
                     409 if conflict else 400,
-                    {"error": type(error).__name__, "message": message},
+                    {"error": type(error).__name__, "message": user_message(error)},
                 )
 
         def log_message(self, format: str, *args: Any) -> None:

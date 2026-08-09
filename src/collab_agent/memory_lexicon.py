@@ -21,10 +21,14 @@ Two rules constrain what may enter the lexicon:
    from the hidden quadrant to the open one, and only its subject may make that
    move.  The system may notice a candidate; it may never assert one.
 
-Group A entries are proposed by the system from audit facts.  Group B entries
-describe what someone wants from others, which the system cannot observe
-without guessing at intent, so they are self-declared only.  Group B also gives
-a newcomer a manual on day one, before any history exists.
+Group A -- 常用工作模式 -- is proposed by the system from audit facts.  Group B
+-- 我的手动设置 -- describes what someone wants from others, which the system
+cannot observe without guessing at intent, so it is self-declared only.  Group
+B also gives a newcomer a manual on day one, before any history exists.
+
+Every value names a mode before describing it ("草稿模式：...").  The name is
+what a colleague remembers and repeats; the sentence after the colon is what
+makes it checkable against the reversibility rule.
 """
 
 from __future__ import annotations
@@ -32,82 +36,190 @@ from __future__ import annotations
 from typing import Any
 
 
-MEMORY_LEXICON_VERSION = "collaboration-memory-lexicon.v2"
+MEMORY_LEXICON_VERSION = "collaboration-memory-lexicon.v3"
 
 SYSTEM_OBSERVED = "SYSTEM_OBSERVED"
 SELF_DECLARED = "SELF_DECLARED"
 
+#: What each group is called on screen, and why it is a group. Two different
+#: things are being asked for, and mixing them would either invite the system
+#: to guess at intent or hide that it has been watching.
+GROUP_TITLES = {
+    SYSTEM_OBSERVED: "常用工作模式",
+    SELF_DECLARED: "我的手动设置",
+}
+GROUP_BLURBS = {
+    SYSTEM_OBSERVED: "这些习惯通常会在真实协作里慢慢显现。系统可以帮你发现，但最终解释权归你。",
+    SELF_DECLARED: "这些更像真正的个人设置。系统不会替你猜，因为不同选择之间没有优劣，只有哪一种更适合你。",
+}
+
 MEMORY_TOPICS: dict[str, dict[str, Any]] = {
-    # ---- Group A: how I work (system proposes from audit facts) ----
+    # ---- Group A -- 常用工作模式: the system proposes these from audit facts.
+    #
+    # Each value names a mode before describing it. The mode name is what
+    # somebody remembers and repeats; the sentence after the colon is what
+    # makes it checkable. The reversibility rule still binds: swap any two
+    # modes inside a topic and neither may read as the worse one.
     "DELIVERY_RHYTHM": {
         "origin": SYSTEM_OBSERVED,
-        "title": "交付节奏",
-        "prompt": "关于交付节奏，你更接近哪一种？",
+        "title": "交付模式",
+        "prompt": "东西做到什么程度，你会先拿出来？",
         "values": (
-            ("DRAFT_FIRST", "我习惯先给可讨论的草稿", "早点把粗版发给我，一起改比等成品快"),
-            ("ITERATIVE_REVIEW", "我习惯分版本逐步交付", "可以按阶段来看，不用等全部做完"),
-            ("COMPLETE_FIRST", "我习惯想清楚后一次交付", "给我一点完整时间，中途追进度帮助不大"),
+            (
+                "DRAFT_FIRST",
+                "草稿模式：有一个能讨论的版本，我就愿意先拿出来",
+                "不用等我做到很完整，粗版就可以一起看",
+            ),
+            (
+                "ITERATIVE_REVIEW",
+                "分段模式：我喜欢一段一段推进，边做边校准",
+                "阶段版本就可以找我对，不必等到最后",
+            ),
+            (
+                "COMPLETE_FIRST",
+                "成品模式：我更习惯想完整后，再一次性交付",
+                "给我一段连续工作时间，中途频繁检查反而容易打断",
+            ),
         ),
     },
     "PROGRESS_SIGNAL": {
         "origin": SYSTEM_OBSERVED,
-        "title": "进展同步",
-        "prompt": "关于同步进展，你更接近哪一种？",
+        "title": "进度播报模式",
+        "prompt": "做的过程中，你一般怎么同步进度？",
         "values": (
-            ("QUICK_SIGNAL", "我习惯用简短信号勤同步", "看我的状态就知道进度，不用单独问"),
-            ("MILESTONE_ONLY", "我习惯只在关键节点同步", "没消息通常就是正常推进"),
-            ("RISK_FIRST", "我习惯风险和阻塞优先同步", "我说话时通常是有事需要处理"),
+            (
+                "QUICK_SIGNAL",
+                "常亮模式：有进展我通常会顺手同步一点",
+                "看我的日常消息，基本就能知道做到哪了",
+            ),
+            (
+                "MILESTONE_ONLY",
+                "节点模式：我主要在关键节点同步",
+                "平时安静通常代表正常推进，到节点我会主动出现",
+            ),
+            (
+                "RISK_FIRST",
+                "异常优先模式：风险、阻塞和变化我会优先说",
+                "普通进展未必都会报，但有问题我不会藏到最后",
+            ),
         ),
     },
     "HELP_SEEKING": {
         "origin": SYSTEM_OBSERVED,
-        "title": "求助习惯",
-        "prompt": "关于求助，你更接近哪一种？",
+        "title": "卡住后的处理模式",
+        "prompt": "卡住的时候，你通常怎么处理？",
         "values": (
-            ("ASK_WHEN_BLOCKED", "我卡住会尽早开口", "我提出来时通常是真的需要帮忙"),
-            ("TRY_FIRST", "我习惯先自己试一轮再问", "我沉默一段时间是在试，不是没动"),
-            ("OPTIONS_INCLUDED", "我求助时会带上候选方案", "可以直接帮我选，不用从头想"),
+            (
+                "ASK_WHEN_BLOCKED",
+                "求援模式：确认卡住后，我会尽早找人一起解",
+                "我来找你的时候，通常是真的需要一起处理",
+            ),
+            (
+                "TRY_FIRST",
+                "排障模式：我习惯先自己拆一轮、试几种办法",
+                "我暂时没出声，可能只是在自己定位问题",
+            ),
+            (
+                "OPTIONS_INCLUDED",
+                "带方案模式：求助前，我通常会先整理几个候选解法",
+                "不一定需要陪我从零想，帮我判断几个方案就很有价值",
+            ),
         ),
     },
     "SCHEDULE_HABIT": {
         "origin": SYSTEM_OBSERVED,
-        "title": "排期习惯",
-        "prompt": "关于给自己定时间，你更接近哪一种？",
+        "title": "截止时间模式",
+        "prompt": "给自己定时间时，你更接近哪一种？",
         "values": (
-            ("COMMIT_EARLY", "我倾向承诺得比团队要求更早", "找我的活通常会提前到手，可以早点安排下一步"),
-            ("COMMIT_TO_ASK", "我通常按团队要求的时间承诺", "按团队定的时间来对我就行"),
-            ("RENEGOTIATE_EARLY", "我一发现有风险就尽早改期", "我动时间通常提前说，看到我改期就是真有情况"),
+            (
+                "COMMIT_EARLY",
+                "提前量模式：我习惯把自己的目标时间放在正式截止之前",
+                "我的东西通常会比约定时间更早回来",
+            ),
+            (
+                "COMMIT_TO_ASK",
+                "准点模式：我习惯直接按约定时间推进",
+                "不用额外替我预留提前量，按说好的时间配合即可",
+            ),
+            (
+                "RENEGOTIATE_EARLY",
+                "预警模式：一旦判断时间可能有变化，我会尽早重新对齐",
+                "我主动改时间，通常意味着已经识别到了实际风险",
+            ),
         ),
     },
-    # ---- Group B: what I need from others (self-declared only) ----
+    # ---- Group B -- 我的手动设置: self-declared only.
+    #
+    # Nothing in an audit trail reveals which of these somebody wants, so the
+    # system never proposes one; guessing here would be inventing intent.
     "BRIEF_DETAIL": {
         "origin": SELF_DECLARED,
-        "title": "我需要多少背景",
-        "prompt": "派活给你时，你希望拿到多少信息？",
+        "title": "信息输入方式",
+        "prompt": "派活给你时，你希望先拿到什么？",
         "values": (
-            ("CONCLUSION_AND_BOUNDS", "给我结论和边界就够", "说清楚要什么、不要什么即可"),
-            ("CHECKLIST", "给我清单和拆分更好用", "拆成条目我上手更快"),
-            ("CONTEXT_FIRST", "我需要先了解完整背景", "先讲来龙去脉，我才知道怎么取舍"),
+            (
+                "CONCLUSION_AND_BOUNDS",
+                "结论输入：先告诉我目标、结论和边界就够了",
+                "把“要什么、不要什么”讲清楚，中间过程我可以自己补",
+            ),
+            (
+                "CHECKLIST",
+                "清单输入：步骤、条目和待办最容易让我进入状态",
+                "能拆成清单的信息，我通常接得最快",
+            ),
+            (
+                "CONTEXT_FIRST",
+                "全景输入：我更希望先理解背景和来龙去脉",
+                "先让我知道为什么做，后面的判断会更准确",
+            ),
         ),
     },
     "FEEDBACK_STYLE": {
         "origin": SELF_DECLARED,
-        "title": "我希望怎么收到反馈",
+        "title": "反馈接收方式",
         "prompt": "对你的成果提意见时，你希望怎么说？",
         "values": (
-            ("DIRECT", "我希望直接指出问题", "不用铺垫，说问题就行"),
-            ("GOAL_FIRST", "我希望先对齐目标再谈问题", "先说清楚要达成什么，我好判断改哪里"),
-            ("CONCRETE_SUGGESTION", "我希望给出具体修改建议", "说明期望的样子比说哪里没做好更有用"),
+            (
+                "DIRECT",
+                "直球反馈：问题在哪里，可以直接告诉我",
+                "不需要太多铺垫，明确指出问题就好",
+            ),
+            (
+                # "我希望" added: a value must be first person, and the guard
+                # that enforces it is the same one that keeps these readable
+                # as self-description rather than as instructions about a person.
+                "GOAL_FIRST",
+                "目标反馈：我希望先把最终想达到的效果讲清楚",
+                "先告诉我终点，我更容易判断现在差在哪里",
+            ),
+            (
+                "CONCRETE_SUGGESTION",
+                "示例反馈：具体告诉我希望它变成什么样最有效",
+                "与其只说“不太对”，不如给一个修改方向或参考",
+            ),
         ),
     },
     "SYNC_PREFERENCE": {
         "origin": SELF_DECLARED,
-        "title": "我偏好的沟通方式",
-        "prompt": "需要和你确认事情时，你更偏好哪种方式？",
+        "title": "沟通通道",
+        "prompt": "需要跟你确认事情时，走哪种方式更好？",
         "values": (
-            ("ASYNC_TEXT", "我以异步文字沟通为主", "留言就好，我会集中回"),
-            ("SYNC_AT_MILESTONE", "我希望关键节点当面或语音", "重要节点约一次比来回打字快"),
-            ("INTERRUPTIBLE", "我随时可以被打断", "有事直接找我，不用攒着"),
+            (
+                "ASYNC_TEXT",
+                "留言模式：我更习惯集中处理异步文字消息",
+                "直接留言即可，不需要等我即时回复",
+            ),
+            (
+                # "我" added, same reason as GOAL_FIRST above.
+                "SYNC_AT_MILESTONE",
+                "节点通话模式：平时异步，关键时刻我更喜欢快速聊一下",
+                "真正重要的问题，十分钟同步往往比来回打字更快",
+            ),
+            (
+                "INTERRUPTIBLE",
+                "随时呼叫模式：我对即时打断的接受度比较高",
+                "有事情可以直接来找我，不用特意攒到一起",
+            ),
         ),
     },
 }
@@ -145,6 +257,14 @@ def topic_origin(topic: str) -> str:
 def memory_lexicon_payload() -> dict[str, Any]:
     return {
         "version": MEMORY_LEXICON_VERSION,
+        "groups": [
+            {
+                "origin": origin,
+                "title": GROUP_TITLES[origin],
+                "blurb": GROUP_BLURBS[origin],
+            }
+            for origin in (SYSTEM_OBSERVED, SELF_DECLARED)
+        ],
         "topics": [
             {
                 "topic": topic,
@@ -230,6 +350,15 @@ def assert_lexicon_is_reversible() -> None:
         values = spec["values"]
         if len(values) < 2:
             raise ValueError(f"{topic} must offer an alternative to be reversible")
+        # Upper bound as well as lower. A questionnaire people actually finish
+        # is a handful of choices per question, and a topic that grew to six
+        # would quietly turn one question into a memory test.
+        if len(values) > 4:
+            raise ValueError(f"{topic} offers too many modes to choose between")
+        if "：" not in str(spec["title"]) and not all(
+            "：" in label for _, label, _ in values
+        ):
+            raise ValueError(f"{topic} values must name a mode before describing it")
         codes = [code for code, _, _ in values]
         if len(set(codes)) != len(codes):
             raise ValueError(f"{topic} has duplicate codes")

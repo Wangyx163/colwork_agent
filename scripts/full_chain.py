@@ -644,6 +644,174 @@ if len(free) >= 2:
         )
         step("撤销这组结构", code == 200, f"{code} {str(body.get('message'))[:60]}")
 
+print("\n=== 11b. 复合任务：填 → 汇总 → 投票 → 定稿 ===")
+
+everyone = list(actors)
+cmp_owner_name = everyone[1] if len(everyone) > 1 else everyone[0]
+cmp_owner = actors[cmp_owner_name]
+
+code, made = call(
+    "POST",
+    "/api/compound-tasks",
+    {
+        "kind": "VOTE",
+        "title": "全链路：面试题清单",
+        "body": "每人先各写几条",
+        "owner_actor_id": cmp_owner,
+        "member_actor_ids": [actors[name] for name in everyone],
+        "selection_count": 2,
+        "source_span": "00:12:04 我们各人先出几条，之后一个人汇总",
+        "message_id": "cmp_chain_create",
+    },
+    lead,
+)
+step("会议负责人建复合任务", code == 200, f"{code} {str(made.get('message'))[:60]}")
+compound_id = made.get("compound_task_id", "")
+
+if compound_id:
+    for index, name in enumerate(everyone):
+        code, body = call(
+            "POST",
+            f"/api/compound-tasks/{compound_id}/input",
+            {
+                "payload": {"options": [f"{name} 的第一条", f"{name} 的第二条"]},
+                "message_id": f"cmp_chain_fill_{index}",
+            },
+            tokens[name],
+        )
+        if index < len(everyone) - 1:
+            step(
+                f"{name} 填项后仍停在填写环节",
+                code == 200 and not body.get("stage_complete"),
+                f"{code} {body.get('stage')}",
+            )
+        else:
+            step(
+                "最后一个人填完才推进到汇总",
+                code == 200 and bool(body.get("stage_complete")),
+                f"{code} {body.get('stage_complete')}",
+            )
+
+    # Everybody has answered, so the stage has moved on -- a late list must not
+    # land after the merge that was meant to contain it.
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{compound_id}/input",
+        {"payload": {"options": ["迟到的一条"]}, "message_id": "cmp_chain_late"},
+        tokens[everyone[0]],
+    )
+    step("汇总环节里个人补交被拒", code >= 400, str(code))
+
+    other = next(name for name in everyone if actors[name] != cmp_owner)
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{compound_id}/owner-stage",
+        {"payload": {"options": ["一", "二", "三"]}, "message_id": "cmp_chain_wrong"},
+        tokens[other],
+    )
+    step("别人替负责人汇总被拒", code >= 400, str(code))
+
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{compound_id}/owner-stage",
+        {"payload": {"options": ["候选一", "候选二"]}, "message_id": "cmp_chain_thin"},
+        tokens[cmp_owner_name],
+    )
+    step("候选条数不多于保留条数被拒", code >= 400, str(code))
+
+    code, body = call(
+        "POST",
+        f"/api/compound-tasks/{compound_id}/owner-stage",
+        {
+            "payload": {"options": ["候选一", "候选二", "候选三", "候选四"]},
+            "message_id": "cmp_chain_merge",
+        },
+        tokens[cmp_owner_name],
+    )
+    step(
+        "负责人定下候选，开放投票",
+        body.get("stage") == "VOTING",
+        f"{code} {body.get('stage')}",
+    )
+
+    for index, name in enumerate(everyone):
+        code, body = call(
+            "POST",
+            f"/api/compound-tasks/{compound_id}/input",
+            {
+                "payload": {"scores": {"0": 5, "1": 2, "2": 4, "3": 1}},
+                "message_id": f"cmp_chain_vote_{index}",
+            },
+            tokens[name],
+        )
+    step(
+        "所有人打完分推进到定稿",
+        bool(body.get("stage_complete")),
+        str(body.get("stage_complete")),
+    )
+
+    seen = call("GET", "/api/state?surface=tasks", token=tokens[everyone[0]])[1]
+    row = next(
+        (
+            item
+            for item in (seen.get("compound_tasks") or [])
+            if item["compound_task_id"] == compound_id
+        ),
+        None,
+    )
+    ranking = (row or {}).get("result") or {}
+    kept = [item["text"] for item in ranking.get("selected") or []]
+    step(
+        "排名把落选项也一并给出",
+        len(ranking.get("ranked") or []) == 4 and kept == ["候选一", "候选三"],
+        str(kept),
+    )
+
+    code, body = call(
+        "POST",
+        f"/api/compound-tasks/{compound_id}/owner-stage",
+        {"payload": {"remark": "按分数留前两条"}, "message_id": "cmp_chain_final"},
+        tokens[cmp_owner_name],
+    )
+    step("负责人定稿收尾", body.get("stage") == "DONE", f"{code} {body.get('stage')}")
+
+code, second = call(
+    "POST",
+    "/api/compound-tasks",
+    {
+        "kind": "SUBMIT",
+        "title": "全链路：材料收集",
+        "body": "各自交一份",
+        "owner_actor_id": cmp_owner,
+        "member_actor_ids": [actors[name] for name in everyone],
+        "selection_count": None,
+        "source_span": "00:20:00 各自交一份材料给他汇总",
+        "message_id": "cmp_chain_submit",
+    },
+    lead,
+)
+step("提交型复合任务可建", code == 200, str(code))
+submit_id = second.get("compound_task_id", "")
+if submit_id:
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{submit_id}/revoke",
+        {"reason": "", "message_id": "cmp_chain_revoke_bad"},
+        tokens[cmp_owner_name],
+    )
+    step("撤销不写原因被拒", code >= 400, str(code))
+    code, body = call(
+        "POST",
+        f"/api/compound-tasks/{submit_id}/revoke",
+        {"reason": "人拉错了，重新建一个", "message_id": "cmp_chain_revoke"},
+        tokens[cmp_owner_name],
+    )
+    step(
+        "写了原因可以撤销",
+        body.get("stage") == "REVOKED",
+        f"{code} {body.get('stage')}",
+    )
+
 print("\n=== 12. 拒绝一条系统观察 ===")
 rejected_one = False
 for name in helpers:

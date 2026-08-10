@@ -1,3 +1,4 @@
+import type { CompoundTask } from "./tasks/CompoundPanel";
 /** Shapes taken from a real `/api/state?surface=manage` response, not from
  *  the server source: only the fields these panels read are declared, so a
  *  field appearing here means something on screen depends on it. */
@@ -315,6 +316,7 @@ export interface ManageState {
   episode: Record<string, unknown> & { episode_id: string; title?: string };
   vocabulary: Vocabulary;
   tasks: Task[];
+  compound_tasks?: CompoundTask[];
   notices: Notice[];
   pending_approvals: Approval[];
   /** Null until an episode has produced one -- a meeting still in flight has

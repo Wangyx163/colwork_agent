@@ -1748,10 +1748,15 @@ def serve_dashboard(
                     self._json(200, result)
                     return
                 elif compound_match:
-                    # Membership is the stage machine's to check, not this
-                    # layer's: it knows whose turn it is, and duplicating the
-                    # rule here is how the two answers drift apart.
-                    authorization.require_participant(principal)
+                    # Only that you belong to this meeting. Which people a
+                    # compound task is for is its own roster, and the stage
+                    # machine already checks it -- asking the same question
+                    # twice in two places is how the two answers drift apart.
+                    #
+                    # Specifically not require_participant: a coordinator who
+                    # is also one of the five filling something in got a 403
+                    # here before the roster was ever consulted.
+                    authorization.require_episode(principal)
                     compound_task_id, operation = compound_match.groups()
                     if operation == "input":
                         result = compound_store.submit_input(

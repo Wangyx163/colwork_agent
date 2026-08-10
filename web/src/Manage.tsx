@@ -5,6 +5,7 @@ import { buildStrip, formatDay } from "./manage/schedule";
 import { ScheduleStrip } from "./manage/ScheduleStrip";
 import { FinalReport } from "./manage/FinalReport";
 import { StructurePanel } from "./manage/StructurePanel";
+import { CompoundDeclare } from "./manage/CompoundDeclare";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
 
@@ -213,6 +214,8 @@ export default function ManagePage() {
           <Blank>都派完了。</Blank>
         )}
       </Zone>
+
+      <CompoundDeclare state={state} act={act} />
 
       <StructurePanel state={state} act={act} />
 

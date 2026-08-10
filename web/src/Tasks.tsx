@@ -10,6 +10,7 @@ import { unanswered } from "./tasks/Survey";
 import { IdentityGate, WhoAmI, signOut, storedActor } from "./tasks/WhoAmI";
 import { MyTaskCard, type Act } from "./tasks/MyTaskCard";
 import { VotePanel } from "./tasks/VotePanel";
+import { CompoundPanel } from "./tasks/CompoundPanel";
 
 const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
 
@@ -98,6 +99,12 @@ export default function TasksPage() {
   const votes = state.tasks.filter(
     (task) => task.collaboration_progress && involvesMe(task, me),
   );
+  // Finished ones stay out of the zone but keep their place in history: a
+  // shape that ran to a decision is a thing people go back and look at.
+  const compound = (state.compound_tasks ?? []).filter(
+    (task) => task.stage !== "REVOKED",
+  );
+  const compoundOwed = compound.filter((task) => task.my_turn).length;
   const coordinator = state.allowed_surfaces.includes("manage");
 
   return (
@@ -202,9 +209,32 @@ export default function TasksPage() {
         </div>
       </Zone>
 
-      {votes.length ? (
+      {compound.length ? (
         <Zone
           n="02"
+          name="复合任务"
+          pending={compoundOwed}
+          pendingLabel={
+            compoundOwed ? `${compoundOwed} 项轮到你` : "都不在你这儿"
+          }
+          why="会上定下的多环节协作：大家各自填 → 一个人汇总 → 大家投票 → 那个人定稿。每一环节都要所有人交齐才往下走。"
+        >
+          <div className="grid gap-2">
+            {compound.map((task) => (
+              <CompoundPanel
+                key={task.compound_task_id}
+                task={task}
+                me={me}
+                reload={load}
+              />
+            ))}
+          </div>
+        </Zone>
+      ) : null}
+
+      {votes.length ? (
+        <Zone
+          n="03"
           name="投票"
           pending={votes.length}
           pendingLabel={`${votes.length} 项需要你参与`}

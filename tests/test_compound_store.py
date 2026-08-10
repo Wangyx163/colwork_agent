@@ -375,5 +375,93 @@ class ProjectionTests(CompoundStoreTestCase):
         self.assertTrue(result["complete"])
 
 
+class NoticeTests(CompoundStoreTestCase):
+    """The bell is the entry point, so a stage nobody is told about is a stage
+    that quietly waits forever."""
+
+    def notices(self) -> list[dict]:
+        import json
+
+        return [
+            {**dict(row), "payload": json.loads(dict(row)["payload"])}
+            for row in self.db.all(
+                "SELECT effect_type, payload FROM outbox_entries "
+                "WHERE effect_type = ? ORDER BY created_sim_time, outbox_id",
+                ("COMPOUND_TURN",),
+            )
+        ]
+
+    def test_declaring_tells_everybody_it_is_their_turn(self) -> None:
+        self.create()
+
+        sent = self.notices()
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(
+            sorted(sent[0]["payload"]["recipient_actor_ids"]), sorted(MEMBERS)
+        )
+
+    def test_an_owner_stage_tells_only_the_owner(self) -> None:
+        """A notice everybody gets on every move is one people stop reading."""
+
+        task_id = self.create()
+        self.fill(task_id, MEMBERS)
+
+        self.assertEqual(
+            self.notices()[-1]["payload"]["recipient_actor_ids"], [OWNER]
+        )
+
+    def test_finishing_notifies_nobody(self) -> None:
+        task_id = self.run_to_voting()
+        before = len(self.notices())
+        for actor_id in MEMBERS:
+            submit_input(
+                self.db,
+                task_id,
+                run_id="run1",
+                actor_id=actor_id,
+                payload={"scores": {"0": 5, "1": 1, "2": 4, "3": 2}},
+                sim_time="2026-08-11T13:00:00+00:00",
+                message_id=self.message(),
+            )
+        finish_owner_stage(
+            self.db,
+            task_id,
+            run_id="run1",
+            actor_id=OWNER,
+            payload={"remark": "留前两条"},
+            sim_time="2026-08-11T14:00:00+00:00",
+            message_id=self.message(),
+        )
+
+        after = self.notices()
+
+        self.assertEqual(after[-1]["payload"]["stage"], "FINALIZING")
+        self.assertGreater(len(after), before)
+
+    def test_the_notice_carries_the_meeting_source(self) -> None:
+        self.create()
+
+        fields = self.notices()[0]["payload"]["notification"]["fields"]
+
+        self.assertIn(SPAN, [field["value"] for field in fields])
+
+    def test_the_notice_carries_what_an_im_adapter_needs(self) -> None:
+        """Reaching the bell is not the same as being deliverable.
+
+        The first version of this notice had a title, a summary and fields, so
+        it rendered -- and then the dispatcher died on a missing
+        conversation_id, leaving a row the outbox could never drain. Only a
+        run that actually delivered found it, so the shape is asserted here.
+        """
+
+        self.create()
+
+        payload = self.notices()[0]["payload"]
+
+        for field in ("conversation_id", "sender_actor_id", "content"):
+            self.assertIn(field, payload, field)
+
+
 if __name__ == "__main__":
     unittest.main()

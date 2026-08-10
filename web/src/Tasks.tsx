@@ -213,6 +213,7 @@ export default function TasksPage() {
         <Zone
           n="02"
           name="复合任务"
+          anchor="zone-compound"
           pending={compoundOwed}
           pendingLabel={
             compoundOwed ? `${compoundOwed} 项轮到你` : "都不在你这儿"

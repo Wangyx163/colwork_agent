@@ -51,6 +51,7 @@ NOTIFY_ASSISTANCE_REQUESTED = "ASSISTANCE_REQUESTED"
 NOTIFY_RESULT_PENDING_REVIEW = "RESULT_PENDING_REVIEW"
 NOTIFY_TASK_AMENDED = "TASK_AMENDED"
 NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
+NOTIFY_COMPOUND_TURN = "COMPOUND_TURN"
 #: The two things a task owner may change about their own task, in the words
 #: a reader uses for them rather than the column names.
 AMENDABLE_FIELD_NAMES = {"title": "任务名称", "deliverable": "任务说明"}
@@ -63,6 +64,7 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_RESULT_PENDING_REVIEW,
         NOTIFY_TASK_AMENDED,
         NOTIFY_ASSISTANCE_RESOLVED,
+        NOTIFY_COMPOUND_TURN,
     }
 )
 

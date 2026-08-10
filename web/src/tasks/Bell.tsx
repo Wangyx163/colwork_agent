@@ -169,7 +169,15 @@ export function Bell({
               body={notice.summary}
               fields={notice.fields}
               onGo={() => {
-                onFocus(notice.action_item_id);
+                // A compound notice names no action item; sending it through
+                // onFocus would scroll to nothing at all.
+                if (notice.compound_task_id) {
+                  document
+                    .getElementById("zone-compound")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                } else {
+                  onFocus(notice.action_item_id);
+                }
                 setOpen(false);
               }}
             />

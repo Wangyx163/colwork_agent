@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from .compound_tasks import (
+    STAGE_TITLES,
     CompoundKind,
     CompoundTaskError,
     Stage,
@@ -116,6 +117,23 @@ def create_compound_task(
                 "selection_count": selection_count,
             },
             correlation_id=f"corr_{message_id}",
+        )
+        _notify(
+            db,
+            cursor,
+            {
+                "compound_task_id": compound_task_id,
+                "episode_id": episode_id,
+                "title": title,
+                "body": body,
+                "source_span": source_span.strip(),
+                "member_actor_ids": members,
+                "owner_actor_id": owner_actor_id,
+            },
+            Stage.COLLECTING,
+            run_id=run_id,
+            episode_id=episode_id,
+            sim_time=sim_time,
         )
         result = {
             "compound_task_id": compound_task_id,
@@ -414,6 +432,86 @@ def revoke(
     return result
 
 
+def _notify(
+    db: Any,
+    cursor: Any,
+    task: dict[str, Any],
+    stage: Stage,
+    *,
+    run_id: str,
+    episode_id: str,
+    sim_time: str,
+) -> None:
+    """Tell the people whose turn it just became.
+
+    Through the Outbox, which is the same row Feishu delivers and the same row
+    the bell reads. A second channel for compound tasks would be a second
+    thing that can disagree with what the page shows.
+
+    Only the people who owe something get it. A notice that reaches everybody
+    on every transition is a notice people learn to dismiss without reading,
+    and then the one that mattered goes with it.
+    """
+
+    role = role_at(stage)
+    if role == "NOBODY":
+        return
+    recipients = (
+        list(task["member_actor_ids"])
+        if role == "EVERYONE"
+        else [task["owner_actor_id"]]
+    )
+    outbox_id = f"obx_{uuid4().hex}"
+    effect_id = f"eff_compound_{task['compound_task_id']}_{stage}"
+    cursor.execute(
+        "INSERT INTO outbox_entries(outbox_id, run_id, episode_id, "
+        "action_item_id, effect_type, effect_id, payload, status, "
+        "attempt_count, available_at_sim_time, correlation_id, "
+        "created_sim_time) VALUES (?, ?, ?, NULL, ?, ?, ?, 'PENDING', 0, ?, ?, ?)",
+        (
+            outbox_id,
+            run_id,
+            episode_id,
+            "COMPOUND_TURN",
+            effect_id,
+            canonical_json(
+                {
+                    # The shape every IM adapter reads. A notice that omits
+                    # these reaches the bell and then fails on delivery, which
+                    # is worse than not sending it: the page shows something
+                    # the outbox can never drain.
+                    "conversation_id": "conv_main",
+                    "sender_actor_id": "agent",
+                    "content": (
+                        f"【{STAGE_TITLES[stage]}】{task['title']}"
+                    ),
+                    "recipient_actor_ids": recipients,
+                    "compound_task_id": task["compound_task_id"],
+                    "stage": str(stage),
+                    "notification": {
+                        "title": f"{STAGE_TITLES[stage]}：{task['title']}",
+                        "summary": (
+                            task["body"]
+                            or f"会上定下的复合任务，现在轮到你{STAGE_TITLES[stage]}。"
+                        ),
+                        "fields": [
+                            {"label": "环节", "value": STAGE_TITLES[stage]},
+                            {
+                                "label": "参与",
+                                "value": f"{len(task['member_actor_ids'])} 人",
+                            },
+                            {"label": "会议出处", "value": task["source_span"]},
+                        ],
+                    },
+                }
+            ),
+            sim_time,
+            f"corr_{task['compound_task_id']}",
+            sim_time,
+        ),
+    )
+
+
 def _enter(
     db: Any,
     cursor: Any,
@@ -425,6 +523,8 @@ def _enter(
     reason: str,
     actor_id: str | None = None,
 ) -> None:
+    """Move to a stage and tell whoever it just became the turn of."""
+
     cursor.execute(
         "UPDATE compound_tasks SET stage = ?, stage_entered_sim_time = ?, "
         "version = version + 1 WHERE compound_task_id = ?",
@@ -444,6 +544,15 @@ def _enter(
             **({"actor_id": actor_id} if actor_id else {}),
         },
         correlation_id=f"corr_{task['compound_task_id']}_{stage}",
+    )
+    _notify(
+        db,
+        cursor,
+        task,
+        stage,
+        run_id=run_id,
+        episode_id=task["episode_id"],
+        sim_time=sim_time,
     )
 
 

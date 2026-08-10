@@ -1067,6 +1067,9 @@ def workbench_state(
                     "notice_id": row["effect_id"],
                     "kind": row["effect_type"],
                     "action_item_id": row["action_item_id"],
+                    # A compound notice is about no action item at all, so the
+                    # bell needs the other id to have anywhere to send anybody.
+                    "compound_task_id": payload.get("compound_task_id"),
                     "title": notification.get("title", ""),
                     "summary": notification.get("summary", ""),
                     "fields": notification.get("fields", []),

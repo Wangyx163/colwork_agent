@@ -15,6 +15,7 @@ from .auth import (
     PrincipalError,
     VirtualSessionPrincipalProvider,
 )
+from . import compound_store
 from .attachments import MAX_ATTACHMENT_COUNT, MAX_TOTAL_ATTACHMENT_BYTES
 from .metrics import build_report
 from .memory_lexicon import (
@@ -1103,6 +1104,19 @@ def workbench_state(
             "max_attachment_bytes": MAX_TOTAL_ATTACHMENT_BYTES,
         },
         "tasks": tasks,
+        # Alongside the ordinary tasks rather than under them: to the person
+        # reading the page these are both "something I owe somebody". They run
+        # on their own stage machine, which is why they arrive as their own
+        # list instead of being flattened into the one above.
+        # Guarded the way the notices above are: this builder also serves an
+        # unauthenticated view, and "whose turn is it" has no answer there.
+        "compound_tasks": (
+            compound_store.project(
+                service.db, service.episode_id, actor_id=principal.actor_id
+            )
+            if principal
+            else []
+        ),
         "notices": notices,
         "pending_approvals": approvals,
         "final": final,
@@ -1483,8 +1497,24 @@ def serve_dashboard(
     artifact_retry_path = re.compile(
         r"^/api/artifact-versions/([^/]+)/retry-processing$"
     )
+    compound_create_path = re.compile(r"^/api/compound-tasks$")
+    compound_path = re.compile(
+        r"^/api/compound-tasks/([^/]+)/(input|owner-stage|revoke)$"
+    )
 
     class Handler(BaseHTTPRequestHandler):
+        def _message_id(self, payload: Any) -> str:
+            """The client's idempotency key, required rather than invented.
+
+            Generating one here would make every retry a fresh write, which is
+            exactly the failure the receipt table exists to prevent.
+            """
+
+            message_id = str(payload.get("message_id", "") or "").strip()
+            if not message_id:
+                raise ValueError("message_id is required")
+            return message_id
+
         def _read_json_body(self) -> Any:
             """Enforce the raw body ceiling before allocating or decoding it."""
 
@@ -1673,6 +1703,8 @@ def serve_dashboard(
                 parsed.path
             )
             artifact_retry_match = artifact_retry_path.match(parsed.path)
+            compound_create_match = compound_create_path.match(parsed.path)
+            compound_match = compound_path.match(parsed.path)
             if (
                 not approval_match
                 and not final_generate_match
@@ -1685,6 +1717,8 @@ def serve_dashboard(
                 and not artifact_match
                 and not artifact_contribution_match
                 and not artifact_retry_match
+                and not compound_create_match
+                and not compound_match
             ):
                 self._json(404, {"error": "not_found"})
                 return
@@ -1692,7 +1726,66 @@ def serve_dashboard(
             try:
                 payload = self._read_json_body()
                 principal = self._principal()
-                if approval_match:
+                if compound_create_match:
+                    # Declaring the shape is the coordinator's, the same as
+                    # dispatching an ordinary task: it puts work on five
+                    # people's plates without asking them first.
+                    authorization.require_coordinator(principal)
+                    result = compound_store.create_compound_task(
+                        service.db,
+                        run_id=service.run_id,
+                        episode_id=service.episode_id,
+                        kind=payload.get("kind", ""),
+                        title=payload.get("title", ""),
+                        body=payload.get("body", ""),
+                        owner_actor_id=payload.get("owner_actor_id", ""),
+                        member_actor_ids=payload.get("member_actor_ids", []),
+                        source_span=payload.get("source_span", ""),
+                        selection_count=payload.get("selection_count"),
+                        sim_time=service.now(),
+                        message_id=self._message_id(payload),
+                    )
+                    self._json(200, result)
+                    return
+                elif compound_match:
+                    # Membership is the stage machine's to check, not this
+                    # layer's: it knows whose turn it is, and duplicating the
+                    # rule here is how the two answers drift apart.
+                    authorization.require_participant(principal)
+                    compound_task_id, operation = compound_match.groups()
+                    if operation == "input":
+                        result = compound_store.submit_input(
+                            service.db,
+                            compound_task_id,
+                            run_id=service.run_id,
+                            actor_id=principal.actor_id,
+                            payload=payload.get("payload") or {},
+                            sim_time=service.now(),
+                            message_id=self._message_id(payload),
+                        )
+                    elif operation == "owner-stage":
+                        result = compound_store.finish_owner_stage(
+                            service.db,
+                            compound_task_id,
+                            run_id=service.run_id,
+                            actor_id=principal.actor_id,
+                            payload=payload.get("payload") or {},
+                            sim_time=service.now(),
+                            message_id=self._message_id(payload),
+                        )
+                    else:
+                        result = compound_store.revoke(
+                            service.db,
+                            compound_task_id,
+                            run_id=service.run_id,
+                            actor_id=principal.actor_id,
+                            reason=payload.get("reason", ""),
+                            sim_time=service.now(),
+                            message_id=self._message_id(payload),
+                        )
+                    self._json(200, result)
+                    return
+                elif approval_match:
                     authorization.require_coordinator(principal)
                     result = service.decide_approval(
                         approval_match.group(1),

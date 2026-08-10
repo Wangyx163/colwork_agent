@@ -9,6 +9,21 @@ interface Option {
   text: string;
 }
 
+interface RankedOption extends Option {
+  score_total: number;
+  score_count: number;
+  score_average: number | null;
+}
+
+interface VoteSummary {
+  required_vote_count: number;
+  submitted_vote_count: number;
+  complete: boolean;
+  selection_count: number;
+  ranked_options: RankedOption[];
+  selected_options: RankedOption[];
+}
+
 interface Contribution {
   contribution_id: string;
   actor_id: string;
@@ -59,6 +74,7 @@ export function VotePanel({
     satisfied: boolean;
   }[];
   const missing = waiting.filter((item) => !item.satisfied);
+  const summary = (progress?.vote_summary as VoteSummary | null) || null;
 
   return (
     <article className="rounded-md border border-rule-2 bg-raise px-3.5 py-3">
@@ -86,6 +102,13 @@ export function VotePanel({
 
       {options.length && !progress?.ballot_open ? (
         <OpenBallot task={task} options={options} act={act} />
+      ) : null}
+
+      {summary ? (
+        <Result
+          summary={summary}
+          unlocked={Boolean(progress?.final_submission_ready)}
+        />
       ) : null}
 
       {options.length ? (
@@ -163,6 +186,71 @@ function OpenBallot({
           开启投票
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** What the scoring decided.
+ *
+ *  The domain has computed this since the first vote was cast and no page ever
+ *  showed it: everybody scored, and then nobody could see which questions had
+ *  survived or that the final task had unlocked. The cut is drawn where the
+ *  ballot said it would be, and the options below it are still listed --
+ *  seeing what came close is how a person judges whether the cut was sensible.
+ */
+function Result({
+  summary,
+  unlocked,
+}: {
+  summary: VoteSummary;
+  unlocked: boolean;
+}) {
+  const kept = new Set(summary.selected_options.map((item) => item.option_id));
+  return (
+    <div className="mt-3 border-t border-rule-2 pt-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <b className="text-[0.84rem]">投票结果</b>
+        <Chip tone={summary.complete ? "ok" : "warn"}>
+          {summary.submitted_vote_count}/{summary.required_vote_count} 人已打分
+        </Chip>
+        {summary.complete ? (
+          <Chip tone={unlocked ? "live" : "plain"}>
+            {unlocked ? "定稿已解锁" : "等上游"}
+          </Chip>
+        ) : null}
+      </div>
+      {!summary.complete ? (
+        <p className="mt-1 text-[0.78rem] text-ink-3">
+          还有人没打分，下面的排名会随之变化。
+        </p>
+      ) : null}
+      <ol className="mt-2 grid gap-1">
+        {summary.ranked_options.map((option, index) => {
+          const inCut = kept.has(option.option_id);
+          return (
+            <li
+              key={option.option_id}
+              className={`grid grid-cols-[1.4rem_1fr_auto] items-baseline gap-2 rounded px-1.5 py-1 text-[0.81rem] ${
+                inCut ? "bg-ok-wash" : "opacity-60"
+              }`}
+            >
+              <span className="tabular font-mono text-[0.7rem] text-ink-3">
+                {index + 1}
+              </span>
+              <span>{option.text}</span>
+              <span className="tabular font-mono text-[0.7rem] text-ink-3">
+                {option.score_total} 分
+                {option.score_average !== null
+                  ? `（均 ${option.score_average}）`
+                  : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-1.5 text-[0.75rem] text-ink-3">
+        取前 {summary.selection_count} 条（浅色底），其余保留在这里备查。
+      </p>
     </div>
   );
 }

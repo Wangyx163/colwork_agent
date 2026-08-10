@@ -428,4 +428,44 @@ CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events
 CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
     FOR EACH ROW EXECUTE FUNCTION reject_audit_event_mutation();
 
+
+-- A shape the meeting decided on, rather than a set of tasks wired together.
+-- Its stages alternate between everybody and one person, and that alternation
+-- is what the earlier dependency-based version could not express: there was no
+-- stage at which somebody was asked to fill in their own options.
+CREATE TABLE compound_tasks (
+    compound_task_id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    kind TEXT NOT NULL CHECK (kind IN ('VOTE', 'SUBMIT')),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (
+        stage IN ('COLLECTING','MERGING','VOTING','FINALIZING','DONE','REVOKED')
+    ),
+    -- Read off the meeting rather than chosen in a form: the person at the
+    -- stage where the headcount drops is the one doing the merging.
+    owner_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    member_actor_ids JSONB NOT NULL,
+    selection_count INTEGER,
+    source_span TEXT NOT NULL,
+    created_sim_time TIMESTAMPTZ NOT NULL,
+    stage_entered_sim_time TIMESTAMPTZ NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0)
+);
+
+-- One person's answer at one stage. Options are rows here rather than text to
+-- be parsed later: a person typing one option per line already knows where
+-- they end, and asking a model to rediscover that is a step that can only
+-- lose information.
+CREATE TABLE compound_task_inputs (
+    input_id TEXT PRIMARY KEY,
+    compound_task_id TEXT NOT NULL REFERENCES compound_tasks(compound_task_id),
+    stage TEXT NOT NULL,
+    actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    payload JSONB NOT NULL,
+    source_message_id TEXT NOT NULL,
+    created_sim_time TIMESTAMPTZ NOT NULL,
+    UNIQUE (compound_task_id, stage, actor_id)
+);
+
 COMMIT;

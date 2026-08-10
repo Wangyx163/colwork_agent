@@ -343,6 +343,45 @@ CREATE TABLE IF NOT EXISTS mock_im_messages (
     accepted_sequence INTEGER NOT NULL UNIQUE,
     accepted_sim_time TEXT NOT NULL
 );
+
+-- A shape the meeting decided on, rather than a set of tasks wired together.
+-- Its stages alternate between everybody and one person, and that alternation
+-- is what the earlier dependency-based version could not express: there was no
+-- stage at which somebody was asked to fill in their own options.
+CREATE TABLE IF NOT EXISTS compound_tasks (
+    compound_task_id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    kind TEXT NOT NULL CHECK (kind IN ('VOTE', 'SUBMIT')),
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (
+        stage IN ('COLLECTING','MERGING','VOTING','FINALIZING','DONE','REVOKED')
+    ),
+    -- Read off the meeting rather than chosen in a form: the person at the
+    -- stage where the headcount drops is the one doing the merging.
+    owner_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    member_actor_ids TEXT NOT NULL,
+    selection_count INTEGER,
+    source_span TEXT NOT NULL,
+    created_sim_time TEXT NOT NULL,
+    stage_entered_sim_time TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0)
+);
+
+-- One person's answer at one stage. Options are rows here rather than text to
+-- be parsed later: a person typing one option per line already knows where
+-- they end, and asking a model to rediscover that is a step that can only
+-- lose information.
+CREATE TABLE IF NOT EXISTS compound_task_inputs (
+    input_id TEXT PRIMARY KEY,
+    compound_task_id TEXT NOT NULL REFERENCES compound_tasks(compound_task_id),
+    stage TEXT NOT NULL,
+    actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    payload TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    created_sim_time TEXT NOT NULL,
+    UNIQUE (compound_task_id, stage, actor_id)
+);
 """
 
 

@@ -24,110 +24,124 @@ from __future__ import annotations
 #: translation, because it tells somebody confidently about a rule they did
 #: not break.
 USER_MESSAGES: dict[str, str] = {
-    # ---- 派发与复核 ----
-    "only a draft or returned task definition may be edited": (
-        "这个任务已经派出去了，定义不能再改。"
-        "要改名称或说明，让任务负责人在自己的卡片上改；要换人或改期限，只能先退回。"
+    'only a draft or returned task definition may be edited': (
+        '只有草稿或已退回的任务定义可以被编辑'
     ),
-    "only a draft or returned task may be dispatched": (
-        "这个任务已经派发过了。它现在等的是被派到的人接受，不是再派一次。"
+    'only a draft or returned task may be dispatched': (
+        '只有草稿或已退回的任务可以被派发'
     ),
-    "team required time must be later than the current time": (
-        "团队要求交付的时间要晚于现在。"
+    'team required time must be later than the current time': (
+        '团队要求时间必须晚于当前时间'
     ),
-    "only unpublished, unclaimed proposals may be merged": (
-        "只有还没派发、也没人认领的候选才能合并。"
+    'only unpublished, unclaimed proposals may be merged': (
+        '只有未发布、未认领的提案可以被合并'
     ),
-    "title, deliverable, and work requirements are required": (
-        "任务名称和交付物都要填。"
+    'title, deliverable, and work requirements are required': (
+        '标题、交付物和工作要求为必填项'
     ),
-    "priority must be P0, P1, or P2": "优先级只能是 P0、P1 或 P2。",
-    # ---- 改任务说明 ----
-    "only the task owner may amend its description": (
-        "只有这个任务的负责人能改它的说明。"
-        "会议负责人的权限在派发时就用完了。"
+    'priority must be P0, P1, or P2': (
+        '优先级必须为 P0、P1 或 P2'
     ),
-    "only a task being worked on may have its description amended": (
-        "任务还没被人接下来，或者已经结束了，这时候改说明没有意义。"
+    'only the task owner may amend its description': (
+        '只有任务负责人可以修改任务描述'
     ),
-    "title and description are required": "名称和说明都要填。",
-    # ---- 求助 ----
-    "resolution summary is required": (
-        "要写一句怎么解决的，发起人会看到这句。"
-        "如果成果已经提交，可以直接点标记解决，系统会把成果转过去。"
+    'only a task being worked on may have its description amended': (
+        '只有正在处理中的任务可以修改任务描述'
     ),
-    "only the requested attendee may acknowledge help": (
-        "这条求助不是发给你的，只有被求助的人能接手。"
+    'title and description are required': (
+        '标题和描述为必填项'
     ),
-    "only the requester may cancel help": "只有发起求助的人能撤销它。",
-    "only the requester or helper may resolve help": (
-        "只有发起人或接手的人能标记解决。"
+    'resolution summary is required': (
+        '解决摘要为必填项'
     ),
-    "assistance request is already closed": "这条求助已经关掉了。",
-    "assistance request is already acknowledged": "已经有人接手了。",
-    # ---- 协作者贡献 ----
-    "contribution action must be INCLUDE, REQUEST_REVISION, or PROMOTE": (
-        "只能选：采纳进我的版本、请对方再改、或直接作为最终候选。"
+    'only the requested attendee may acknowledge help': (
+        '只有被请求的参与者可以确认帮助'
     ),
-    "revision feedback is required": "请对方再改时，要写清楚改什么。",
-    "the selected version is not a collaborator contribution": (
-        "这个版本是任务负责人自己交的，不走协作者材料这条路。"
+    'only the requester may cancel help': (
+        '只有请求方可以取消帮助'
     ),
-    # ---- 提交与验收 ----
-    "an artifact version is already pending acceptance": (
-        "上一版还等着验收，先等负责人处理完再交新的。"
+    'only the requester or helper may resolve help': (
+        '只有请求方或帮助方可以解决帮助请求'
     ),
-    "task result processing must finish before human acceptance": (
-        "系统还在读这一版的正文和附件，读完才能验收。稍等一下再试。"
+    'assistance request is already closed': (
+        '协助请求已关闭'
     ),
-    # ---- 收集 → 投票 → 定稿 ----
-    "at least one collection action item is required": "至少要选一个上游收集任务。",
-    "decision action item cannot depend on itself": "汇总任务不能把自己当上游。",
-    "at least one voter is required": "至少要指定一个投票人。",
-    "selection_count must be between 1 and 8": "最终保留的条数要在 1 到 8 之间。",
-    "meeting source span is required": (
-        "复合结构要指明会议上是在哪说的，不能凭空建。"
+    'assistance request is already acknowledged': (
+        '协助请求已确认'
     ),
-    "a revocation reason is required": "撤销要写原因。",
-    "only the final task owner may open the ballot": (
-        "只有定稿负责人能开启投票。"
+    'contribution action must be INCLUDE, REQUEST_REVISION, or PROMOTE': (
+        '贡献操作必须为 INCLUDE、REQUEST_REVISION 或 PROMOTE'
     ),
-    "all collection tasks must be accepted before opening the ballot": (
-        "上游的收集任务要全部验收完，才能开始打分。"
+    'revision feedback is required': (
+        '修订反馈为必填项'
     ),
-    "the opened ballot is locked": "投票已经开了，候选不能再改。",
-    "ballot must contain between 2 and 100 options": (
-        "候选至少要有 2 条。"
+    'the selected version is not a collaborator contribution': (
+        '所选版本不是协作者贡献'
     ),
-    # ---- 协作说明书 ----
-    "this topic is proposed from observed facts and must be confirmed, not declared": (
-        "这一题是系统从你的协作记录里观察出来的，等它提出来你再确认，不用自己填。"
+    'an artifact version is already pending acceptance': (
+        '已有一个制品版本正在等待接受'
     ),
-    "memory value is not allowed for this topic": (
-        "这个选项不在这一题的选项表里。"
+    'task result processing must finish before human acceptance': (
+        '任务结果处理必须在人工作出接受之前完成'
     ),
-    "private collaboration memory belongs to another actor": (
-        "这是别人的协作说明书，只有本人能改。"
+    'at least one collection action item is required': (
+        '至少需要一个收集类行动项'
     ),
-    "only a draft memory may be rejected": (
-        "只有系统提出、你还没确认的那种才能拒绝；已经确认的用「撤下」。"
+    'decision action item cannot depend on itself': (
+        '决策行动项不能依赖其自身'
     ),
-    "only a confirmed memory may be withdrawn": (
-        "这条还没确认，或者已经撤下过了。"
+    'at least one voter is required': (
+        '至少需要一名投票者'
     ),
-    "unsupported memory action": "不支持的操作。",
-    # ---- 通用 ----
-    "message_id is required": (
-        "这次请求缺少幂等标识，页面没有正确发出。刷新一下再试。"
+    'selection_count must be between 1 and 8': (
+        'selection_count 必须介于 1 和 8 之间'
     ),
-    "only the meeting coordinator may manage action items": (
-        "这一步只有会议负责人能做。"
+    'meeting source span is required': (
+        '会议来源范围为必填项'
     ),
-    "only a meeting participant may perform this action": (
-        "你不在这场会议的参会名单里。"
+    'a revocation reason is required': (
+        '撤销原因是必填项'
+    ),
+    'only the final task owner may open the ballot': (
+        '只有最终任务负责人可以开启投票'
+    ),
+    'all collection tasks must be accepted before opening the ballot': (
+        '开启投票前，所有收集任务都必须已被接受'
+    ),
+    'the opened ballot is locked': (
+        '已开启的投票将被锁定'
+    ),
+    'ballot must contain between 2 and 100 options': (
+        '投票必须包含 2 到 100 个选项'
+    ),
+    'this topic is proposed from observed facts and must be confirmed, not declared': (
+        '该主题是基于已观察事实提出的，必须经过确认，不能直接声明'
+    ),
+    'memory value is not allowed for this topic': (
+        '该主题不允许设置记忆值'
+    ),
+    'private collaboration memory belongs to another actor': (
+        '私有协作记忆属于其他参与者'
+    ),
+    'only a draft memory may be rejected': (
+        '只有草稿状态的记忆可以被拒绝'
+    ),
+    'only a confirmed memory may be withdrawn': (
+        '只有已确认的记忆可以被撤回'
+    ),
+    'unsupported memory action': (
+        '不支持的记忆操作'
+    ),
+    'message_id is required': (
+        'message_id 为必填项'
+    ),
+    'only the meeting coordinator may manage action items': (
+        '只有会议协调人可以管理行动项'
+    ),
+    'only a meeting participant may perform this action': (
+        '只有会议参与者可以执行此操作'
     ),
 }
-
 
 def user_message(error: BaseException) -> str:
     """The sentence to show, falling back to whatever the domain said."""

@@ -152,6 +152,26 @@
         "requires_extra": null,
         "note": "/observatory 七个面板；数字复用 metrics.py 与 product_evaluation.py，不重算，有测试逐字段对照 report.json。前端 Vite+React+Tailwind4，构建产物提交，CI 仍是纯 Python。",
         "verified_by": "tests/test_observatory.py"
+      },
+      "MULTI_MEETING_CONSOLE": {
+        "status": "DONE",
+        "note": "一个进程一个端口服多场会，路径首段是会议 slug（wangyuxiang01）。令牌按会议隔离——A 会的令牌打 B 会返回 401，有真跑 socket 的测试。slug 一次分配后存进 episode_sources 永不重算，因为链接已经发出去了。拼音是可选 extra（pinyin），不装则退化成 m-<hash>，仍唯一稳定。",
+        "verified_by": "tests/test_multi_meeting_console.py"
+      },
+      "FEISHU_SELF_REGISTRATION": {
+        "status": "DONE_UNVERIFIED",
+        "note": "@ 机器人发「会议 + 名字」自助绑定，替掉 CLI feishu-bind。先到先得：谁先认领谁得，负责人收到一张带撤销按钮的卡片——这是刻意选的，代价是撤销之前冒名者能看到那个人的任务。两条边界不动：只能认领已在名单上的名字（不新增参会人），撤销要求调用者是这个人所在会议的负责人。离线测试覆盖 21 条，但从未对真实租户跑过。",
+        "verified_by": "tests/test_feishu_registration.py"
+      },
+      "FEISHU_MEETING_INTAKE": {
+        "status": "DONE_UNVERIFIED",
+        "note": "群里 @ 机器人 + 妙记链接 → 拉逐字稿 → 名单确认卡 → 建会 → 回工作台链接。抽取与名单确认并行跑（两者互不需要对方的输出），谁后完成谁建会，用条件 UPDATE 抢占，和 Outbox 同一套办法。名单永远由人确认，不从逐字稿的发言人推参会人。新会议要重启 serve-console 才被服务，进程会把这句打出来。从未对真实租户跑过——妙记导出权限和真实 chat_id 都没验证。",
+        "verified_by": "tests/test_feishu_intake_end_to_end.py"
+      },
+      "EXTRACTION_CACHE": {
+        "status": "DONE",
+        "note": "抽取按 stable_hash(逐字稿) 缓存，这正是抽取文件里 input_sha256 的值——所以 var/extractions/ 里已有的文件天然就是缓存条目，没有迁移。两种模式：cache 命不中就拒绝、绝不调模型（演示走这个）；live 命不中才抽。同一份逐字稿有多个抽取时取最新的（reviewed 覆盖 blind）。",
+        "verified_by": "tests/test_intake_cache.py"
       }
     },
     "runtime": {

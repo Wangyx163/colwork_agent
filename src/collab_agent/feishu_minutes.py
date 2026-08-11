@@ -158,6 +158,31 @@ class LarkMinutesTransport:
         return members
 
 
+#: A 妙记 link, in the shapes people actually paste. The token is the last path
+#: segment; everything after it is a query string Feishu adds and a person
+#: copies along without noticing.
+MINUTE_URL_PATTERN = re.compile(
+    r"https?://[^\s]*?/minutes/(?P<token>[A-Za-z0-9_-]{8,})"
+)
+
+
+def minute_token_from(text: str) -> str:
+    """Pull the token out of whatever somebody pasted.
+
+    A bare token is accepted too: the CLI has always taken one, and refusing it
+    here would mean the chat path and the terminal path disagreed about what a
+    妙记 is.
+    """
+
+    text = (text or "").strip()
+    match = MINUTE_URL_PATTERN.search(text)
+    if match:
+        return match.group("token")
+    if re.fullmatch(r"[A-Za-z0-9_-]{8,}", text):
+        return text
+    return ""
+
+
 def _timestamp(hours: str, minutes: str, seconds: str | None) -> str:
     return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds or 0):02d}"
 

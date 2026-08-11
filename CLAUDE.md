@@ -26,6 +26,8 @@
 | 领域状态迁移 | `05-domain-model.md`、`06-event-catalog.md`、`07-state-machines.md` |
 | 跨会议关联 | `src/collab_agent/linkage.py`、`src/collab_agent/embeddings.py` |
 | 存储 / 迁移 | `db/postgres_schema.sql`、`src/collab_agent/store.py`、`postgres_store.py` |
+| 多会议服务 / URL | `src/collab_agent/web.py` 的 `serve_console`、`episode_registry.py`、`slugs.py` |
+| 自助注册 / 妙记导入 | `src/collab_agent/feishu_registration.py`、`feishu_intake_flow.py`、`intake_cache.py` |
 
 ## Layer C：只在审计或追溯时读
 

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .feishu_cards import build_ack_card
 from .feishu_commands import _payload_of
 from .feishu_config import FeishuConfig
+from .feishu_intake_flow import ROSTER_CONFIRM
 from .feishu_registration import REGISTRATION_REVOKE_ACTION as REGISTRATION_REVOKE
 from .feishu_im import FeishuIM
 from .models import canonical_json, effect_id
@@ -52,6 +53,8 @@ class FeishuApp:
         episode_id: str = "episode_feishu_mvp",
         on_action: Callable[[dict[str, Any]], None] | None = None,
         registrar: Any | None = None,
+        intake: Any | None = None,
+        on_meeting_ready: Callable[[dict[str, Any]], None] | None = None,
         log: Callable[[str], None] = flushing_log,
     ) -> None:
         self.config = config
@@ -61,6 +64,11 @@ class FeishuApp:
         # Off unless injected, so every existing caller and every offline test
         # keeps the read-only reply they had.
         self.registrar = registrar
+        self.intake = intake
+        # How a newly imported meeting starts being served without a restart.
+        # Left to the caller because what "serve it" means belongs to whoever
+        # built the console, not to the chat adapter.
+        self.on_meeting_ready = on_meeting_ready
         self.log = log
         self._work: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         self._worker: threading.Thread | None = None
@@ -169,6 +177,14 @@ class FeishuApp:
         """
 
         sender_open_id = job["sender_open_id"]
+        text = str(job.get("text") or "")
+        if self.intake is not None:
+            from .feishu_minutes import minute_token_from  # noqa: PLC0415
+
+            token = minute_token_from(text)
+            if token:
+                self._start_intake(job, token)
+                return
         if self.registrar is not None:
             self._register_from_message(job)
             return
@@ -247,6 +263,107 @@ class FeishuApp:
             + ("bound " + str(outcome.get("actor_id")) if outcome.get("bound") else "refused")
         )
 
+    def _start_intake(self, job: dict[str, Any], token: str) -> None:
+        """Answer the link now, and do the slow half on the worker thread.
+
+        The reply has to land inside Feishu's three-second budget and the fetch
+        alone can spend most of it, so the person is told what is happening
+        before anything long begins -- a minute of silence reads as a bot that
+        did not hear you.
+        """
+
+        sender_open_id = job["sender_open_id"]
+        try:
+            started = self.intake.start(
+                minute_token=token,
+                chat_id=str(job.get("chat_id") or ""),
+                open_id=sender_open_id,
+                sim_time=real_now(),
+            )
+        except Exception as error:  # noqa: BLE001 - a callback never raises
+            self._send_raw_card(
+                sender_open_id,
+                build_ack_card(
+                    title="这份妙记读不了", body=str(error), template="orange"
+                ),
+                uuid_seed=f"intake-failed:{job['message_id']}",
+            )
+            self.log(f"[feishu] intake failed: {error!r}")
+            return
+        if started["status"] == "READY":
+            self._send_raw_card(
+                sender_open_id,
+                build_ack_card(
+                    title="这场会已经建好了", body=f"直接进：{started['url']}"
+                ),
+                uuid_seed=f"intake-ready:{job['message_id']}",
+            )
+            return
+        self._send_raw_card(
+            sender_open_id,
+            started["card"],
+            uuid_seed=f"intake:{started['intake_id']}",
+        )
+        # Extraction starts now rather than after the roster comes back: it
+        # needs the transcript and nothing else, and the person reading the
+        # card is the other slow thing. Whichever finishes second imports.
+        self._work.put(
+            (
+                "EXTRACT",
+                {
+                    "intake_id": started["intake_id"],
+                    "transcript": started["transcript"],
+                    "open_id": sender_open_id,
+                },
+            )
+        )
+
+    def _run_extraction(self, job: dict[str, Any]) -> None:
+        outcome = self.intake.run_extraction(job["intake_id"], job["transcript"])
+        if outcome["status"] == "FAILED":
+            self._send_raw_card(
+                job["open_id"],
+                build_ack_card(
+                    title="抽取没跑成",
+                    body=str(outcome.get("error") or ""),
+                    template="orange",
+                ),
+                uuid_seed=f"extract-failed:{job['intake_id']}",
+            )
+            return
+        self._settle_intake(job["intake_id"], job["open_id"])
+
+    def _settle_intake(self, intake_id: str, open_id: str) -> None:
+        """Import if both halves are done; stay quiet if the other is still out."""
+
+        try:
+            outcome = self.intake.finish_if_ready(intake_id, sim_time=real_now())
+        except Exception as error:  # noqa: BLE001
+            self._send_raw_card(
+                open_id,
+                build_ack_card(title="建会失败", body=repr(error), template="orange"),
+                uuid_seed=f"intake-error:{intake_id}",
+            )
+            return
+        if outcome["status"] != "READY" or outcome.get("already"):
+            return
+        if self.on_meeting_ready is not None:
+            self.on_meeting_ready(outcome)
+        people = "、".join(outcome.get("participant_names") or [])
+        self._send_raw_card(
+            open_id,
+            build_ack_card(
+                title="会议已就绪",
+                body=(
+                    f"**{outcome.get('title') or outcome['slug']}**\n"
+                    f"参会：{people}\n\n"
+                    f"工作台：{outcome['url']}\n"
+                    "名单上的人 @ 我一下、带上会议和自己的名字就能领任务。"
+                ),
+            ),
+            uuid_seed=f"intake-done:{intake_id}",
+        )
+
     def _send_raw_card(
         self, open_id: str, card: dict[str, Any], *, uuid_seed: str
     ) -> None:
@@ -278,7 +395,26 @@ class FeishuApp:
         error: str | None = None
         outcome: Any = None
         try:
-            if (
+            if self.intake is not None and record["action_name"] == ROSTER_CONFIRM:
+                # Answered before the meeting router, which resolves a click
+                # through the task it names: at this point the meeting does not
+                # exist yet, so there is nothing to route to.
+                payload = _payload_of(record)
+                outcome = self.intake.confirm_roster(
+                    intake_id=payload.get("intake_id", ""),
+                    choice=payload.get("choice", ""),
+                    open_id=record["operator_open_id"],
+                )
+                self._work.put(
+                    (
+                        "SETTLE_INTAKE",
+                        {
+                            "intake_id": payload.get("intake_id", ""),
+                            "open_id": record["operator_open_id"],
+                        },
+                    )
+                )
+            elif (
                 self.registrar is not None
                 and record["action_name"] == REGISTRATION_REVOKE
             ):
@@ -406,6 +542,10 @@ class FeishuApp:
                 self._ack_message(job)
             elif kind == "PROCESS_ACTION":
                 self._process_action(job)
+            elif kind == "EXTRACT":
+                self._run_extraction(job)
+            elif kind == "SETTLE_INTAKE":
+                self._settle_intake(job["intake_id"], job["open_id"])
             else:
                 self.log(f"[feishu] unknown job kind {kind}")
         except Exception as error:  # noqa: BLE001 - worker must survive one bad job

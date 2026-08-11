@@ -118,12 +118,27 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     meeting.add_argument("--dispatch-seconds", type=float, default=2.0)
+    meeting.add_argument(
+        "--intake-mode",
+        choices=("cache", "live"),
+        default="cache",
+        help=(
+            "what a 妙记 link sent to the bot does: 'cache' reuses an "
+            "extraction that already exists and refuses otherwise, which is "
+            "what keeps a demo from calling a model; 'live' extracts on a miss"
+        ),
+    )
 
     console = subparsers.add_parser(
         "serve-console",
         help="serve every meeting registered in this database from one port",
     )
     console.add_argument("--db", default="var/meeting.sqlite3")
+    console.add_argument(
+        "--organization",
+        default="",
+        help="organisation a meeting imported from chat belongs to",
+    )
     console.add_argument("--host", default="127.0.0.1")
     console.add_argument("--port", type=int, default=8766)
     console.add_argument(
@@ -145,6 +160,16 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     console.add_argument("--dispatch-seconds", type=float, default=2.0)
+    console.add_argument(
+        "--intake-mode",
+        choices=("cache", "live"),
+        default="cache",
+        help=(
+            "what a 妙记 link sent to the bot does: 'cache' reuses an "
+            "extraction that already exists and refuses otherwise, which is "
+            "what keeps a demo from calling a model; 'live' extracts on a miss"
+        ),
+    )
     agent = subparsers.add_parser(
         "agent-meeting",
         help="run the durable Agent Worker for one imported meeting",
@@ -475,6 +500,8 @@ def _start_feishu_side(
     dispatch_seconds: float,
     stop: "threading.Event",
     base_url: str = "",
+    intake: Any | None = None,
+    on_meeting_ready: "Callable[[dict], None] | None" = None,
 ) -> "Callable[[], None]":
     """Run the Feishu listener and dispatcher beside something else.
 
@@ -523,6 +550,8 @@ def _start_feishu_side(
         # here: a meeting imported while this is running has to be joinable
         # without a restart, which is the whole point of the Feishu intake.
         registrar=Registrar(served[0].db, im, base_url=base_url),
+        intake=intake,
+        on_meeting_ready=on_meeting_ready,
     )
     session_id = f"feishu_dispatch_{real_now()}"
 
@@ -571,6 +600,52 @@ def _start_feishu_side(
         f"bindings={len(im.bindings())}"  # type: ignore[attr-defined]
     )
     return app.run
+
+
+def _announce_new_meeting(outcome: dict) -> None:
+    """Say that a meeting imported from chat needs a restart to be served.
+
+    Said out loud rather than left as a surprise. Adding a console to a running
+    server means rebuilding the handler's routing table underneath in-flight
+    requests; a link that 404s for one minute is a smaller problem than a
+    request served against a half-built table.
+    """
+
+    print(
+        f"新会议 {outcome['slug']} 已建好；重启 serve-console 后可访问 {outcome['url']}",
+        flush=True,
+    )
+
+
+def _build_intake(
+    database: Any,
+    config: Any,
+    *,
+    organization_name: str,
+    mode: str,
+    base_url: str,
+) -> Any:
+    """Assemble the chat-to-meeting flow, or nothing when it cannot run.
+
+    The extractor is injected rather than imported inside the flow, so the
+    offline tests drive the whole path without a provider -- the same shape
+    every other model call in this project uses.
+    """
+
+    from .extraction import extract_file  # noqa: PLC0415
+    from .feishu_intake_flow import MeetingIntake  # noqa: PLC0415
+    from .feishu_minutes import LarkMinutesTransport  # noqa: PLC0415
+
+    if config is None:
+        return None
+    return MeetingIntake(
+        database,
+        transport=LarkMinutesTransport(config),
+        organization_name=organization_name or "未命名组织",
+        mode=mode,
+        base_url=base_url,
+        extract=lambda source, destination: extract_file(source, destination),
+    )
 
 
 def _register_meeting(
@@ -1049,6 +1124,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dispatch_seconds=args.dispatch_seconds,
                 stop=stop,
                 base_url=f"http://{args.host}:{args.port}",
+                intake=_build_intake(
+                    database,
+                    config,
+                    organization_name=getattr(args, "organization", ""),
+                    mode=args.intake_mode,
+                    base_url=f"http://{args.host}:{args.port}",
+                ),
             )
             if args.dry_run:
                 flushing_log("[feishu] dry run: not opening a connection")
@@ -1123,6 +1205,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 dispatch_seconds=args.dispatch_seconds,
                 stop=stop,
+                base_url=f"http://{args.host}:{args.port}",
+                intake=_build_intake(
+                    database,
+                    config,
+                    organization_name=getattr(args, "organization", ""),
+                    mode=args.intake_mode,
+                    base_url=f"http://{args.host}:{args.port}",
+                ),
             )
             threading.Thread(
                 target=run_connection, name="feishu-connection", daemon=True
@@ -1260,6 +1350,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dispatch_seconds=args.dispatch_seconds,
                 stop=stop,
                 base_url=f"http://{args.host}:{args.port}",
+                intake=_build_intake(
+                    database,
+                    config,
+                    organization_name=getattr(args, "organization", ""),
+                    mode=args.intake_mode,
+                    base_url=f"http://{args.host}:{args.port}",
+                ),
+                on_meeting_ready=_announce_new_meeting,
             )
             threading.Thread(
                 target=run_connection, name="feishu-connection", daemon=True

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .models import read_text_file
+from .models import read_text_file, stable_hash
 
 SENTENCE_END = re.compile(r"(?<=[。！？!?])")
 ANNOTATOR_KAPPA_AMC_A = 0.47
@@ -437,10 +437,18 @@ def score_items(
                 matched_pairs.append((want, candidate))
                 unmatched.remove(candidate)
                 break
-    detection = _prf(
-        len(matched_pairs),
-        len(unmatched),
-        len(expected) - len(matched_pairs),
+    # AMC-A supplies sentence labels but no structured item gold. Returning a
+    # synthetic all-zero item score here made "not annotated" look like "the
+    # extractor found nothing".  Keep grounding diagnostics, but mark item
+    # detection explicitly unavailable.
+    detection = (
+        _prf(
+            len(matched_pairs),
+            len(unmatched),
+            len(expected) - len(matched_pairs),
+        )
+        if expected
+        else None
     )
     normalized_transcript = normalize(meeting.transcript)
     field_hits = {"owner_name": 0, "deadline_iso": 0, "deliverable": 0}
@@ -537,11 +545,83 @@ def benchmark_aligned(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return aligned
 
 
+def _recall_gold_coverage(
+    artifact: dict[str, Any] | None,
+    gold_sentence_indices: set[int],
+) -> dict[str, Any] | None:
+    """Measure where recall evidence survived without treating support as FP.
+
+    Sentence F1 intentionally credits only a cited anchor. For a recall-first
+    pipeline we also need to know whether a gold sentence was retained as
+    explicit candidate support, or survived into the evidence shown in either
+    a draft or a review hint. Those are recall-only coverage measures: support
+    text is not itself a predicted action sentence, so precision is undefined.
+    """
+
+    if not isinstance(artifact, dict) or not isinstance(
+        artifact.get("raw_candidates"), list
+    ):
+        return None
+    unit_by_id = {
+        str(unit.get("unit_id")): unit
+        for unit in artifact.get("units") or []
+        if isinstance(unit, dict) and unit.get("unit_id")
+    }
+
+    def line_indices(unit_ids: Iterable[Any]) -> set[int]:
+        result: set[int] = set()
+        for unit_id in unit_ids:
+            unit = unit_by_id.get(str(unit_id))
+            if unit is None:
+                continue
+            try:
+                result.add(int(unit.get("line_index")))
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    anchors: set[int] = set()
+    explicit_evidence: set[int] = set()
+    for candidate in artifact.get("raw_candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_anchors = line_indices(candidate.get("anchor_unit_ids") or [])
+        anchors.update(candidate_anchors)
+        explicit_evidence.update(candidate_anchors)
+        explicit_evidence.update(
+            line_indices(candidate.get("support_unit_ids") or [])
+        )
+
+    routed_evidence: set[int] = set()
+    for item in [
+        *(artifact.get("draft_items") or []),
+        *(artifact.get("review_hints") or []),
+    ]:
+        if isinstance(item, dict):
+            routed_evidence.update(line_indices(item.get("evidence_unit_ids") or []))
+
+    gold = set(gold_sentence_indices)
+
+    def surface(indices: set[int]) -> dict[str, Any]:
+        hits = len(gold.intersection(indices))
+        return {
+            "hits": hits,
+            "recall": round(hits / len(gold), 4) if gold else None,
+        }
+
+    return {
+        "gold_positive_sentences": len(gold),
+        "raw_anchor": surface(anchors),
+        "explicit_candidate_evidence": surface(explicit_evidence),
+        "routed_candidate_evidence": surface(routed_evidence),
+    }
 def evaluate_extractor(
     meetings: list[LabelledMeeting],
     extractor: Callable[[LabelledMeeting], list[dict[str, Any]]],
     *,
     name: str,
+    checkpoint_dir: str | Path | None = None,
+    resume: bool = True,
 ) -> dict[str, Any]:
     """Score one extraction strategy over every labelled meeting."""
 
@@ -551,61 +631,302 @@ def evaluate_extractor(
     errors: list[dict[str, str]] = []
     grounded = 0
     predicted_total = 0
-    # Meetings that genuinely contain no action item are the sharpest test of
-    # over-extraction: any prediction there is unambiguously a false alarm, and
-    # F1 alone hides them because they contribute no true positives.
-    empty_meetings = 0
-    empty_meetings_clean = 0
+    # A zero-label AMC-A meeting is not necessarily action-free under this
+    # product's broader definition (owner/deadline may be missing). Keep this
+    # useful workload slice, but do not call every prediction a false alarm.
+    zero_label_meetings = 0
+    zero_label_meetings_clean = 0
     # Storing the raw predictions makes any later re-scoring free: a run can
     # be replayed against a different label definition without paying for the
     # model again, which is what keeps a blind set usable more than once.
     predictions: dict[str, list[dict[str, Any]]] = {}
+    stage_totals = {
+        "units": 0,
+        "windows": 0,
+        "model_windows_succeeded": 0,
+        "rule_candidates": 0,
+        "model_candidates": 0,
+        "raw_candidates": 0,
+        "sufficient_candidates": 0,
+        "draft_ready_candidates": 0,
+        "weak_signal_candidates": 0,
+        "anchor_unit_references": 0,
+        "support_unit_references": 0,
+        "evidence_unit_references": 0,
+        "evidence_bridge_unit_references": 0,
+        "model_support_trimmed_candidates": 0,
+        "model_unknown_reference_candidates": 0,
+        "model_unit_id_canonicalized_candidates": 0,
+        "visible_context_anchor_recovered_candidates": 0,
+        "visible_context_duplicate_merged_candidates": 0,
+        "draft_items": 0,
+        "review_hints": 0,
+        "candidate_failures": 0,
+    }
+    routing_reason_totals: dict[str, int] = {}
+    usage_totals: dict[str, int | None] = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "calls_with_usage": 0,
+    }
+    usage_seen = {"prompt_tokens": False, "completion_tokens": False, "total_tokens": False}
+    recall_coverage_hits = {
+        "raw_anchor": 0,
+        "explicit_candidate_evidence": 0,
+        "routed_candidate_evidence": 0,
+    }
+    recall_artifact_meetings = 0
+    item_gold_meetings = 0
+    checkpoint_root = Path(checkpoint_dir) if checkpoint_dir else None
+    extractor_signature = str(
+        getattr(extractor, "run_signature", "")
+        or f"{getattr(extractor, '__module__', '')}.{getattr(extractor, '__qualname__', type(extractor).__qualname__)}"
+    )
+    if checkpoint_root:
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
     for meeting in meetings:
+        checkpoint_path = (
+            checkpoint_root
+            / f"{stable_hash([name, extractor_signature, meeting.meeting_id, meeting.transcript])[:24]}.json"
+            if checkpoint_root
+            else None
+        )
+        extraction_error: str | None = None
+        artifact: dict[str, Any] | None = None
+        reused = False
         try:
-            items = list(extractor(meeting))
+            if resume and checkpoint_path and checkpoint_path.exists():
+                recovered = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                # Successful meetings are the expensive part worth reusing.
+                # A failed checkpoint is evidence, not a terminal result: a
+                # continuation retries it so transient provider failures can
+                # actually finish the corpus.
+                if recovered.get("error") is None:
+                    items = list(recovered.get("items") or [])
+                    artifact = recovered.get("artifact")
+                    reused = True
+            if not reused:
+                items = list(extractor(meeting))
+                artifact = getattr(extractor, "last_artifact", None)
+                if checkpoint_path:
+                    checkpoint_path.write_text(
+                        json.dumps(
+                            {"items": items, "error": None, "artifact": artifact},
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
         except Exception as error:  # an extractor failure is a result, not a crash
-            errors.append({"meeting_id": meeting.meeting_id, "error": str(error)[:300]})
-            continue
+            extraction_error = str(error)[:300]
+            items = []
+            if checkpoint_path:
+                checkpoint_path.write_text(
+                    json.dumps(
+                        {"items": [], "error": extraction_error, "artifact": None},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+        if extraction_error:
+            errors.append(
+                {"meeting_id": meeting.meeting_id, "error": extraction_error}
+            )
         predictions[meeting.meeting_id] = items
         sentence_score = score_sentences(meeting, items)
         item_score = score_items(meeting, items)
         for key in sentence_totals:
             sentence_totals[key] += sentence_score[key]
-            item_totals[key] += item_score["detection"][key]
+            if item_score["detection"] is not None:
+                item_totals[key] += item_score["detection"][key]
+        if item_score["detection"] is not None:
+            item_gold_meetings += 1
         predicted_total += item_score["predicted_items"]
         grounded += item_score["predicted_items"] - item_score["ungrounded_quotes"]
         if not meeting.positive_sentence_indices:
-            empty_meetings += 1
+            zero_label_meetings += 1
             if not items:
-                empty_meetings_clean += 1
+                zero_label_meetings_clean += 1
+        stage = None
+        recall_coverage = _recall_gold_coverage(
+            artifact, meeting.positive_sentence_indices
+        )
+        if recall_coverage is not None:
+            recall_artifact_meetings += 1
+            for surface in recall_coverage_hits:
+                recall_coverage_hits[surface] += int(
+                    recall_coverage[surface]["hits"]
+                )
+        if isinstance(artifact, dict):
+            raw_coverage = artifact.get("coverage") or {}
+            stage = {
+                "pipeline_status": artifact.get("pipeline_status"),
+                "units": int(raw_coverage.get("units_total") or 0),
+                "windows": int(raw_coverage.get("windows_total") or 0),
+                "model_windows_succeeded": int(
+                    raw_coverage.get("model_windows_succeeded") or 0
+                ),
+                "emit_coverage_rate": raw_coverage.get("coverage_rate"),
+                "model_window_success_rate": raw_coverage.get(
+                    "model_window_success_rate"
+                ),
+                "raw_candidates": int(raw_coverage.get("raw_candidates") or 0),
+                "rule_candidates": int(raw_coverage.get("rule_candidates") or 0),
+                "model_candidates": int(raw_coverage.get("model_candidates") or 0),
+                "sufficient_candidates": int(
+                    raw_coverage.get("sufficient_candidates") or 0
+                ),
+                "draft_ready_candidates": int(
+                    raw_coverage.get("draft_ready_candidates")
+                    or raw_coverage.get("sufficient_candidates")
+                    or 0
+                ),
+                "weak_signal_candidates": int(
+                    raw_coverage.get("weak_signal_candidates") or 0
+                ),
+                "anchor_unit_references": int(
+                    raw_coverage.get("anchor_unit_references") or 0
+                ),
+                "support_unit_references": int(
+                    raw_coverage.get("support_unit_references") or 0
+                ),
+                "evidence_unit_references": int(
+                    raw_coverage.get("evidence_unit_references") or 0
+                ),
+                "evidence_bridge_unit_references": int(
+                    raw_coverage.get("evidence_bridge_unit_references") or 0
+                ),
+                "model_support_trimmed_candidates": int(
+                    raw_coverage.get("model_support_trimmed_candidates") or 0
+                ),
+                "model_unknown_reference_candidates": int(
+                    raw_coverage.get("model_unknown_reference_candidates") or 0
+                ),
+                "model_unit_id_canonicalized_candidates": int(
+                    raw_coverage.get("model_unit_id_canonicalized_candidates")
+                    or 0
+                ),
+                "visible_context_anchor_recovered_candidates": int(
+                    raw_coverage.get(
+                        "visible_context_anchor_recovered_candidates"
+                    )
+                    or 0
+                ),
+                "visible_context_duplicate_merged_candidates": int(
+                    raw_coverage.get(
+                        "visible_context_duplicate_merged_candidates"
+                    )
+                    or 0
+                ),
+                "draft_items": int(raw_coverage.get("draft_items") or 0),
+                "review_hints": int(raw_coverage.get("review_hints") or 0),
+                "candidate_failures": len(artifact.get("failures") or []),
+                "routing_reasons": dict(raw_coverage.get("routing_reasons") or {}),
+                "usage": dict(artifact.get("usage") or {}),
+            }
+            for key in stage_totals:
+                stage_totals[key] += int(stage.get(key) or 0)
+            for reason, count in stage["routing_reasons"].items():
+                routing_reason_totals[str(reason)] = (
+                    routing_reason_totals.get(str(reason), 0) + int(count or 0)
+                )
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = stage["usage"].get(key)
+                if isinstance(value, int):
+                    usage_totals[key] = int(usage_totals[key] or 0) + value
+                    usage_seen[key] = True
+            usage_totals["calls_with_usage"] = int(
+                usage_totals["calls_with_usage"] or 0
+            ) + sum(
+                isinstance(call.get("total_tokens"), int)
+                for call in artifact.get("token_calls") or []
+                if isinstance(call, dict)
+            )
         per_meeting.append(
             {
                 "meeting_id": meeting.meeting_id,
+                "extraction_status": "FAILED" if extraction_error else "SUCCEEDED",
+                "extraction_error": extraction_error,
                 "sentences": len(meeting.sentences),
                 "gold_positive_sentences": len(meeting.positive_sentence_indices),
+                "has_gold_positive_sentence": bool(
+                    meeting.positive_sentence_indices
+                ),
                 "sentence_level": sentence_score,
                 "item_level": item_score,
+                "stages": stage,
+                "recall_gold_coverage": recall_coverage,
             }
         )
+    gold_positive_sentences = sum(
+        len(meeting.positive_sentence_indices) for meeting in meetings
+    )
     return {
         "extractor": name,
-        "meetings_scored": len(per_meeting),
+        "meetings_attempted": len(meetings),
+        "meetings_scored": len(meetings) - len(errors),
         "meetings_failed": len(errors),
         "errors": errors,
         "sentence_level_positive_f1": _prf(**sentence_totals),
-        "item_level_detection": _prf(**item_totals),
+        "item_level_detection": (
+            _prf(**item_totals) if item_gold_meetings else None
+        ),
+        "item_level_gold_meetings": item_gold_meetings,
         "quote_grounding_rate": (
             round(grounded / predicted_total, 4) if predicted_total else None
         ),
-        "meetings_without_action_items": empty_meetings,
-        "empty_meetings_kept_clean": empty_meetings_clean,
+        "amc_zero_label_meetings": zero_label_meetings,
+        "amc_zero_label_meetings_kept_clean": zero_label_meetings_clean,
+        "prediction_rate_on_amc_zero_label_meetings": (
+            round(1 - zero_label_meetings_clean / zero_label_meetings, 4)
+            if zero_label_meetings
+            else None
+        ),
+        # Backward-compatible aliases. They are definitionally weaker than the
+        # old names suggested; new reports should use the AMC-specific keys.
+        "meetings_without_action_items": zero_label_meetings,
+        "empty_meetings_kept_clean": zero_label_meetings_clean,
         "false_alarm_rate_on_empty_meetings": (
-            round(1 - empty_meetings_clean / empty_meetings, 4)
-            if empty_meetings
+            round(1 - zero_label_meetings_clean / zero_label_meetings, 4)
+            if zero_label_meetings
             else None
         ),
         "per_meeting": per_meeting,
         "predictions": predictions,
+        "stage_totals": stage_totals,
+        "routing_reason_totals": dict(sorted(routing_reason_totals.items())),
+        "recall_gold_coverage": (
+            {
+                "gold_positive_sentences": gold_positive_sentences,
+                "meetings_with_recall_artifact": recall_artifact_meetings,
+                **{
+                    surface: {
+                        "hits": hits,
+                        "recall": (
+                            round(hits / gold_positive_sentences, 4)
+                            if gold_positive_sentences
+                            else None
+                        ),
+                    }
+                    for surface, hits in recall_coverage_hits.items()
+                },
+            }
+            if recall_artifact_meetings
+            else None
+        ),
+        "usage_totals": {
+            **{
+                key: usage_totals[key] if usage_seen[key] else None
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            },
+            "calls_with_usage": usage_totals["calls_with_usage"],
+        },
+        "checkpoint_dir": str(checkpoint_root.resolve()) if checkpoint_root else None,
+        "extractor_signature": extractor_signature,
     }
 
 
@@ -625,6 +946,13 @@ def frozen_state() -> dict[str, Any]:
         ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
         ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION,
     )
+    from .recall import (
+        EVIDENCE_POLICY_VERSION,
+        MODEL_CANDIDATE_POLICY_VERSION,
+        RECALL_PROMPT_VERSION,
+        RULE_POLICY_VERSION,
+        WINDOW_POLICY_VERSION,
+    )
 
     def git(*args: str) -> str | None:
         try:
@@ -642,6 +970,11 @@ def frozen_state() -> dict[str, Any]:
     return {
         "prompt_version": ACTION_ITEM_EXTRACTION_PROMPT_VERSION,
         "tools_prompt_version": ACTION_ITEM_EXTRACTION_TOOLS_PROMPT_VERSION,
+        "recall_prompt_version": RECALL_PROMPT_VERSION,
+        "window_policy_version": WINDOW_POLICY_VERSION,
+        "rule_policy_version": RULE_POLICY_VERSION,
+        "evidence_policy_version": EVIDENCE_POLICY_VERSION,
+        "model_candidate_policy_version": MODEL_CANDIDATE_POLICY_VERSION,
         "commit": git("rev-parse", "HEAD"),
         # A dirty tree means the committed prompt is not what actually ran, so
         # the reader cannot reconstruct this number.
@@ -653,15 +986,38 @@ def frozen_state() -> dict[str, Any]:
 def compare_extractors(
     meetings: list[LabelledMeeting],
     extractors: dict[str, Callable[[LabelledMeeting], list[dict[str, Any]]]],
+    *,
+    checkpoint_dir: str | Path | None = None,
+    resume: bool = True,
 ) -> dict[str, Any]:
     """Run every strategy over the same meetings so the deltas are meaningful."""
 
     results = {
-        name: evaluate_extractor(meetings, extractor, name=name)
+        name: evaluate_extractor(
+            meetings,
+            extractor,
+            name=name,
+            checkpoint_dir=(Path(checkpoint_dir) / name if checkpoint_dir else None),
+            resume=resume,
+        )
         for name, extractor in extractors.items()
     }
     corpus = {
         "meetings": len(meetings),
+        "meeting_ids": [meeting.meeting_id for meeting in meetings],
+        "dataset_fingerprint": stable_hash(
+            [
+                {
+                    "meeting_id": meeting.meeting_id,
+                    "sentences": meeting.sentences,
+                    "positive_sentence_indices": sorted(
+                        meeting.positive_sentence_indices
+                    ),
+                    "expected_items": meeting.expected_items,
+                }
+                for meeting in meetings
+            ]
+        ),
         "sentences": sum(len(meeting.sentences) for meeting in meetings),
         "gold_positive_sentences": sum(
             len(meeting.positive_sentence_indices) for meeting in meetings
@@ -673,7 +1029,7 @@ def compare_extractors(
         else None
     )
     return {
-        "schema_version": "extraction-evaluation.v1",
+        "schema_version": "extraction-evaluation.v4",
         "frozen_state": frozen_state(),
         "corpus": corpus,
         "published_reference": PUBLISHED_SENTENCE_F1_BASELINE,
@@ -682,5 +1038,31 @@ def compare_extractors(
             "句级 F1 在 70 上下即已接近人类一致性带；出现 90+ 通常说明测量口径有问题，"
             "而不是模型很好。"
         ),
+        "metric_definitions": {
+            "sentence_level_positive_f1": (
+                "Deduplicate predictions by cited transcript sentence before "
+                "computing TP/FP/FN. Raw candidate count is workload, never FP."
+            ),
+            "raw_candidates": (
+                "Pre-routing candidate workload; multiple candidates may cite "
+                "the same sentence and must not be substituted for sentence FP."
+            ),
+            "recall_gold_coverage": (
+                "Recall-only diagnostics over raw anchors, explicit anchor+support "
+                "evidence, and evidence retained after draft/hint routing. Support "
+                "is not a predicted positive sentence, so these surfaces have no "
+                "precision or F1."
+            ),
+            "candidate_reference_workload": (
+                "Anchor and support unit-reference counts are reported beside "
+                "candidate counts. This makes broad support enumeration visible "
+                "instead of rewarding it as free recall."
+            ),
+            "amc_zero_label_meetings": (
+                "Meetings with no AMC-A positive sentence labels. This is not "
+                "proof that the meeting has no action item under the broader "
+                "product definition."
+            ),
+        },
         "results": results,
     }

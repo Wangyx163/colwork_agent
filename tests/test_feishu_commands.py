@@ -8,6 +8,10 @@ from pathlib import Path
 
 from collab_agent.feishu_cards import build_effect_card
 from collab_agent.feishu_commands import (
+    SCORE_ACTION,
+    SCORE_SUBMIT,
+)
+from collab_agent.feishu_commands import (
     AssignmentBridge,
     UnknownCardAction,
     UnresolvableEffect,
@@ -272,3 +276,77 @@ class CardReturnPickerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BallotClickTests(unittest.TestCase):
+    """Scoring an option is not a vote, and only a vote reaches the domain.
+
+    A half-filled ballot is not an opinion anybody has expressed, so a pick
+    must leave the domain untouched. What makes that safe is that the submit
+    carries the whole thing at once: a redelivered click produces the same
+    complete vote rather than a partial one.
+    """
+
+    def setUp(self) -> None:
+        self.calls: list[dict] = []
+
+        class Recording:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def submit_question_vote(self, action_item_id, *, actor_id, scores, message_id):
+                self.outer.calls.append(
+                    {
+                        "action_item_id": action_item_id,
+                        "actor_id": actor_id,
+                        "scores": scores,
+                        "message_id": message_id,
+                    }
+                )
+                return {"status": "SUBMITTED"}
+
+        self.bridge = AssignmentBridge(Recording(self))
+
+    def record(self, action: str, value: dict) -> dict:
+        return {
+            "action_name": action,
+            "actor_id": "actor_1",
+            "operator_open_id": "ou_1",
+            "effect_id": "eff_1",
+            "event_key": "evt_1",
+            "raw_value": json.dumps(
+                {"action_item_id": "ai_1", **value}, ensure_ascii=False
+            ),
+        }
+
+    def test_a_pick_accumulates_and_touches_nothing(self) -> None:
+        result = self.bridge.handle(
+            self.record(
+                SCORE_ACTION,
+                {"option_id": "o2", "reason": "4", "scores": {"o1": 5}},
+            )
+        )
+
+        self.assertEqual(result["status"], "SCORING")
+        self.assertEqual(result["scores"], {"o1": 5, "o2": 4})
+        self.assertEqual(self.calls, [], "a pick is not a vote")
+
+    def test_the_submit_sends_the_whole_ballot(self) -> None:
+        self.bridge.handle(
+            self.record(SCORE_SUBMIT, {"scores": {"o1": 5, "o2": 4}})
+        )
+
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0]["scores"], {"o1": 5, "o2": 4})
+        self.assertEqual(
+            self.calls[0]["message_id"],
+            "evt_1",
+            "the Feishu event id is what makes a redelivery harmless",
+        )
+
+    def test_an_unbound_clicker_is_never_a_voter(self) -> None:
+        record = self.record(SCORE_SUBMIT, {"scores": {"o1": 5}})
+        record["actor_id"] = None
+
+        with self.assertRaises(PermissionError):
+            self.bridge.handle(record)

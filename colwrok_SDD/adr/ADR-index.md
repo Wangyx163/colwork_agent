@@ -87,9 +87,9 @@
 - 理由：减少会议文本构造时间，同时避免下载、清洗和学术评测阻塞 10–15 日产品主链。
 - 详情：`ADR-027-fixture-data-source.md`。
 
-### ADR-028 SUPERSEDED BY ADR-035｜复用 ActionItem 实现任务认领（历史兼容）
+### ADR-028 SUPERSEDED BY ADR-035/ADR-036｜复用 ActionItem 实现任务认领（历史兼容）
 
-- 保留结论：抽取结果直接成为 owner/deadline 可空的 PENDING_CONFIRMATION ActionItem，不建立候选任务或 Claim 实体。
+- 保留结论（由 ADR-036 收窄）：语义充分的 draft_items 直接成为 owner/deadline 可空的 PENDING_CONFIRMATION ActionItem；语义不足项进入 extraction artifact 的 review_hints，不建立候选任务或 Claim 领域实体。
 - 被取代部分：公开待认领池、竞争认领和认领时创建承诺；现由 ADR-035 的版本化派发/逐人响应/整轮退回替代。
 - 详情：`ADR-028-claim-without-candidate-entity.md`。
 
@@ -133,3 +133,9 @@
 - 决策：以“一个主负责人＋零到多个协作者”的版本化派发替代公开认领；成员逐人接受或退回，任一退回使整轮失效并回到负责人修改；个人端使用闹铃、个人时间线和最小协作投影，Memory 使用预制词条。
 - 理由：支持真实多人协作和任务定义返修，同时保持单 ActionItem、单 owner、单 ArtifactVersion lineage 与既有两级人工 Gate。
 - 详情：`ADR-035-versioned-dispatch-and-personal-execution-view.md`。
+
+### ADR-036 ACCEPTED｜召回优先的抽取与复核提示
+
+- 决策：内部区分候选发现与结构整理，但产品只保留一个负责人复核表面；使用一套统一宽召回 Prompt 与确定性规则补网取并集，按上下文充分性自适应扩展。语义不足项进入 pre-Episode extraction artifact 的 `review_hints`，由负责人添加任务或忽略，不建立 ActionItemCandidate 领域实体。
+- 理由：会议 Agent 的漏召成本高于错召；字段不全、跨句证据或单候选失败不得把已发现语料静默删除。固定 3–5 units 与双 Prompt 均无现有证据支持，应先建立可观测、可消融的单 Prompt 基线。
+- 详情：`ADR-036-recall-first-extraction-and-review-hints.md`。

@@ -232,9 +232,10 @@ class FeishuApp:
         if record["status"] != "PENDING":
             return
         error: str | None = None
+        outcome: Any = None
         try:
             if self.on_action is not None:
-                self.on_action(record)
+                outcome = self.on_action(record)
             else:
                 self.log(
                     f"[feishu] action {record['action_name']} by "
@@ -243,6 +244,16 @@ class FeishuApp:
                 )
         except Exception as exc:  # noqa: BLE001 - failure must be recorded, not lost
             error = repr(exc)
+        # Scoring one option of a ballot is not a decision -- nothing has been
+        # expressed until the whole thing is submitted -- so the card is
+        # redrawn with the running scores instead of being closed.
+        if (
+            error is None
+            and isinstance(outcome, dict)
+            and outcome.get("status") == "SCORING"
+        ):
+            self._redraw_ballot(record, outcome.get("scores") or {})
+            return
         # Only now is the outcome known: the callback merely parked the click,
         # and the domain can still refuse it. Updating the card here rather
         # than in the callback is what keeps it from claiming an acceptance
@@ -261,6 +272,31 @@ class FeishuApp:
             )
         if error:
             self.log(f"[feishu] action {action_id} failed: {error}")
+
+    def _redraw_ballot(self, record: dict[str, Any], scores: dict[str, Any]) -> None:
+        """Put the running scores back on the card the click came from.
+
+        The card is the form, so the partial ballot has to live in the message:
+        rebuilt from the notification the effect carried, with what has been
+        picked so far folded in. A pick that cannot be redrawn is silently
+        lost, so a failure here is logged rather than swallowed.
+        """
+
+        from .feishu_cards import build_notification_card
+
+        effect_id = record.get("effect_id")
+        if not effect_id:
+            return
+        command = self.im.command_for_effect(str(effect_id))
+        if not command:
+            self.log(f"[feishu] no ballot behind effect {effect_id}; pick lost")
+            return
+        try:
+            self.im.update_card(
+                str(effect_id), build_notification_card(command, scores)
+            )
+        except Exception as error:  # noqa: BLE001 - a lost pick must be visible
+            self.log(f"[feishu] could not redraw ballot {effect_id}: {error!r}")
 
     def _settle_card(self, record: dict[str, Any], error: str | None) -> None:
         """Rewrite the card to what actually happened, buttons removed."""

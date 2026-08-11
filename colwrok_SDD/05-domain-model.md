@@ -1,7 +1,7 @@
 # 多同事会议行动项协作 Agent｜领域模型
 
-版本：1.6  
-变更依据：ADR-024、ADR-030、ADR-031、ADR-034、ADR-035
+版本：1.7  
+变更依据：ADR-024、ADR-030、ADR-031、ADR-034、ADR-035、ADR-036
 
 ## 建模边界
 
@@ -47,7 +47,7 @@
 - 状态：`PENDING_CONFIRMATION | PENDING_ASSIGNMENT | NEEDS_REVISION | TRACKING | PENDING_ACCEPTANCE | ACCEPTED | AGGREGATED | ARCHIVED | REJECTED | BLOCKED`。REJECTED 仅用于 COORDINATOR 在首次派发前忽略误提取项，不再表示被派发人拒接。
 - 约束：派发时必须有 `team_required_by_sim_time`、一个 OWNER assignment 与零到多个 COLLABORATOR assignment；进入 TRACKING 前必须是当前 definition_version 的全部 assignment 已接受，同时拥有 owner_actor_id 与一个 ACTIVE CommitmentRevision；identity_key 在 Episode 内唯一。
 - 字段分层：`work_requirements` 对执行人可见；`management_review_policy` 仅 COORDINATOR 和验收 purpose 的 SYSTEM 可见，不得放入 PARTICIPANT projection。
-- 说明：抽取结果直接成为 `PENDING_CONFIRMATION` ActionItem；`PENDING_ASSIGNMENT` 表示当前版本已经派发但仍有人未回应，`NEEDS_REVISION` 表示整轮已退回负责人修改，不建立 ActionItemCandidate 或公开 Claim 表。
+- 说明：抽取 artifact 中语义充分的 `draft_items` 直接成为 `PENDING_CONFIRMATION` ActionItem；语义不足的 `review_hints` 只保存在 pre-Episode artifact，COORDINATOR 添加为任务后才创建 ActionItem。`review_hints` 不是领域实体，不建立 ActionItemCandidate 或第二套状态机。`PENDING_ASSIGNMENT` 表示当前版本已经派发但仍有人未回应，`NEEDS_REVISION` 表示整轮已退回负责人修改。
 - 验证：AUTO-DATA-AI-001 至 AUTO-DATA-AI-004。
 
 ### DATA-ASG-001｜ActionItemAssignment

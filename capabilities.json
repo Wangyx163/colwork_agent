@@ -122,7 +122,9 @@
         "verified_by": "tests/test_feishu_notification_cards.py"
       },
       "FEISHU_VOTE_CARD": {
-        "status": "NOT_DONE"
+        "status": "DONE_UNVERIFIED",
+        "note": "每个候选一个下拉，选完在卡片上累计，全部打完才出现提交按钮；半张票只活在消息里，不进领域。离线测试覆盖渲染与点击路由，未对真实租户跑过。",
+        "verified_by": "tests/test_feishu_notification_cards.py, tests/test_feishu_commands.py"
       },
       "FEISHU_MINUTES_INTAKE": {
         "status": "DONE_UNVERIFIED",

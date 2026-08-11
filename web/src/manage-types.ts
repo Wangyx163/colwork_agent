@@ -153,6 +153,7 @@ export interface Notice {
   notice_id: string;
   kind: string;
   action_item_id: string;
+  compound_task_id?: string;
   title: string;
   summary: string;
   fields: { label: string; value: string }[];
@@ -292,6 +293,22 @@ export interface MeetingProgress {
   completed: number;
 }
 
+export interface ReviewHint {
+  hint_id: string;
+  candidate_id: string;
+  status: "OPEN" | "MATERIALIZED" | "DISMISSED";
+  source_timestamp: string;
+  source_quote: string;
+  evidence_text: string;
+  reason_code: string;
+  materialized_action_item_id?: string | null;
+  hint_payload?: {
+    kind_hints?: string[];
+    facts_found?: string[];
+    evidence_unit_ids?: string[];
+  };
+}
+
 export interface Participant {
   actor_id: string;
   display_name: string;
@@ -316,6 +333,7 @@ export interface ManageState {
   episode: Record<string, unknown> & { episode_id: string; title?: string };
   vocabulary: Vocabulary;
   tasks: Task[];
+  review_hints: ReviewHint[];
   compound_tasks?: CompoundTask[];
   notices: Notice[];
   pending_approvals: Approval[];

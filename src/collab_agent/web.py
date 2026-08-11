@@ -1082,6 +1082,17 @@ def workbench_state(
             if len(notices) >= 12:
                 break
 
+    review_hints = []
+    for raw_hint in db.all(
+        "SELECT * FROM review_hints WHERE episode_id = ? "
+        "ORDER BY CASE status WHEN 'OPEN' THEN 0 ELSE 1 END, "
+        "created_sim_time, hint_id",
+        (service.episode_id,),
+    ):
+        hint = dict(raw_hint)
+        hint["hint_payload"] = _decode_json(hint.get("hint_payload")) or {}
+        review_hints.append(hint)
+
     state = {
         "episode": dict(episode),
         # Vocabularies the pages must offer verbatim.
@@ -1107,6 +1118,9 @@ def workbench_state(
             "max_attachment_bytes": MAX_TOTAL_ATTACHMENT_BYTES,
         },
         "tasks": tasks,
+        # Same coordinator queue, different entity. A hint has no task state
+        # and becomes an ActionItem only through the explicit materialize API.
+        "review_hints": review_hints,
         # Alongside the ordinary tasks rather than under them: to the person
         # reading the page these are both "something I owe somebody". They run
         # on their own stage machine, which is why they arrive as their own
@@ -1443,6 +1457,7 @@ def _project_workbench_state(
                     version.pop("source_manifest", None)
         visible_tasks.append(task)
     projected["tasks"] = visible_tasks
+    projected["review_hints"] = []
     projected["pending_approvals"] = []
     if not projected.get("final") or projected["final"].get("status") != "RELEASED":
         projected["final"] = None
@@ -1479,6 +1494,7 @@ def serve_dashboard(
     action_path = re.compile(
         r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote)$"
     )
+    review_hint_path = re.compile(r"^/api/review-hints/([^/]+)/materialize$")
     collaboration_structure_path = re.compile(
         r"^/api/collaboration-structures/question-vote$"
     )
@@ -1692,6 +1708,7 @@ def serve_dashboard(
             approval_match = approval_path.match(parsed.path)
             final_generate_match = final_generate_path.match(parsed.path)
             action_match = action_path.match(parsed.path)
+            review_hint_match = review_hint_path.match(parsed.path)
             collaboration_structure_match = collaboration_structure_path.match(
                 parsed.path
             )
@@ -1712,6 +1729,7 @@ def serve_dashboard(
                 not approval_match
                 and not final_generate_match
                 and not action_match
+                and not review_hint_match
                 and not collaboration_structure_match
                 and not structure_revoke_match
                 and not assistance_match
@@ -1793,6 +1811,23 @@ def serve_dashboard(
                         )
                     self._json(200, result)
                     return
+                elif review_hint_match:
+                    authorization.require_coordinator(principal)
+                    result = service.materialize_review_hint(
+                        review_hint_match.group(1),
+                        actor_id=principal.actor_id,
+                        title=payload.get("title", ""),
+                        deliverable=payload.get("deliverable", ""),
+                        acceptance_criteria=payload.get(
+                            "acceptance_criteria", ""
+                        ),
+                        priority=payload.get("priority", "P1"),
+                        team_required_by_sim_time=payload.get(
+                            "team_required_by_sim_time"
+                        ),
+                        work_requirements=payload.get("work_requirements"),
+                        message_id=self._message_id(payload),
+                    )
                 elif approval_match:
                     authorization.require_coordinator(principal)
                     result = service.decide_approval(

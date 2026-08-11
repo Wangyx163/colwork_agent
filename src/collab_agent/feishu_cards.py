@@ -213,7 +213,108 @@ DECISION_REASON_PRESETS = {
 }
 
 
-def build_notification_card(command: dict[str, Any]) -> dict[str, Any]:
+
+#: What one voter has picked so far travels in every control's value, so the
+#: next pick can carry the previous ones. Feishu caps an action value, and a
+#: ballot is at most a handful of short ids and single digits, so the whole
+#: partial form fits.
+SCORE_ACTION = "VOTE_SCORE"
+SCORE_SUBMIT = "VOTE_SUBMIT"
+
+
+def _score_controls(
+    decision: dict[str, Any],
+    base_value: dict[str, Any],
+    scores: dict[str, int],
+) -> list[dict[str, Any]]:
+    """One picker per option, plus a submit that waits for the last one.
+
+    Every option has to be scored before the domain will take the vote, so the
+    card shows what is still missing rather than letting somebody submit and be
+    told. The count is stated because a reader scrolling a long ballot loses
+    track of it.
+    """
+
+    options = list(decision.get("score_options") or [])
+    low, high = (decision.get("score_range") or [1, 5])[:2]
+    elements: list[dict[str, Any]] = [{"tag": "hr"}]
+    for index, option in enumerate(options):
+        option_id = str(option.get("option_id") or index)
+        picked = scores.get(option_id)
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f'**{index + 1}.** {option.get("text", "")}'
+                        + (f"　✅ {picked} 分" if picked else "")
+                    ),
+                },
+                "extra": {
+                    "tag": "select_static",
+                    "placeholder": {
+                        "tag": "plain_text",
+                        "content": f"{picked} 分" if picked else "打分",
+                    },
+                    "value": {
+                        **base_value,
+                        "action": SCORE_ACTION,
+                        "option_id": option_id,
+                        "scores": scores,
+                    },
+                    "options": [
+                        {
+                            "text": {"tag": "plain_text", "content": f"{score} 分"},
+                            "value": str(score),
+                        }
+                        for score in range(int(low), int(high) + 1)
+                    ],
+                },
+            }
+        )
+
+    missing = [
+        option
+        for option in options
+        if str(option.get("option_id")) not in scores
+    ]
+    if missing:
+        elements.append(
+            {
+                "tag": "note",
+                "elements": [
+                    {
+                        "tag": "plain_text",
+                        "content": f"还有 {len(missing)} 条没打分，全部打完才能提交",
+                    }
+                ],
+            }
+        )
+    else:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "提交评分"},
+                        "type": "primary",
+                        "value": {
+                            **base_value,
+                            "action": SCORE_SUBMIT,
+                            "scores": scores,
+                        },
+                    }
+                ],
+            }
+        )
+    return elements
+
+
+def build_notification_card(
+    command: dict[str, Any], progress: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Render a card from the `notification` contract the domain emits.
 
     The domain already states what a notification says and which decisions it
@@ -261,12 +362,24 @@ def build_notification_card(command: dict[str, Any]) -> dict[str, Any]:
 
     actions: list[dict[str, Any]] = []
     web_only: list[str] = []
+    scores = {
+        str(key): int(value)
+        for key, value in (progress or {}).items()
+        if str(value).lstrip("-").isdigit()
+    }
     for decision in notification.get("decisions") or []:
         name = str(decision.get("name") or "")
         label = str(decision.get("label") or name)
         if decision.get("score_options"):
-            # Scoring several options is a form, not a tap.
-            web_only.append(label)
+            # A ballot is a form, and a card cannot hold one -- but it can hold
+            # the form's state. Each option gets its own picker, every pick
+            # rewrites the card with the running scores baked into every
+            # control, and the submit button appears once nothing is missing.
+            # No staging table: the card is the form, so a half-finished ballot
+            # lives in the message rather than in the domain.
+            elements.extend(
+                _score_controls(decision, base_value, scores or {})
+            )
             continue
         presets = DECISION_REASON_PRESETS.get(name)
         if decision.get("requires_reason") and not presets:

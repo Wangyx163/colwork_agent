@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from . import feishu_cards as _cards
+
 
 # What a card button asks the domain to do. Anything outside this map is
 # rejected rather than guessed at, so a stale card from an older deploy cannot
@@ -25,6 +27,13 @@ DEFAULT_RETURN_REASONS = (
 ASSISTANCE_DECISIONS = {
     "ASSISTANCE_ACKNOWLEDGE": "ACKNOWLEDGE",
 }
+
+
+#: Re-exported from the card module so the two halves of the vote flow cannot
+#: drift apart: the name a control carries and the name the bridge answers to
+#: are the same constant.
+SCORE_ACTION = _cards.SCORE_ACTION
+SCORE_SUBMIT = _cards.SCORE_SUBMIT
 
 
 class UnknownCardAction(ValueError):
@@ -126,8 +135,64 @@ class AssignmentBridge:
             )
         return result
 
+    def _handle_vote(self, record: dict[str, Any], action_name: str) -> dict[str, Any]:
+        """Score one option, or send the finished ballot.
+
+        Picking is not deciding: a pick rewrites the card with the running
+        scores and touches no domain state, because a half-filled ballot is not
+        an opinion anybody has expressed yet. Only the submit reaches the
+        domain, and it carries the whole thing at once -- which is also what
+        makes a redelivered click harmless, since the same event key produces
+        the same complete vote.
+        """
+
+        actor_id = record.get("actor_id")
+        if not actor_id:
+            raise PermissionError(
+                f"open_id {record.get('operator_open_id')} is not bound to a "
+                "participant; a click from an unknown person is never a vote"
+            )
+        payload = _payload_of(record)
+        action_item_id = str(payload.get("action_item_id") or "")
+        if not action_item_id:
+            raise UnresolvableEffect("vote click carried no action item")
+        scores = {
+            str(key): int(value)
+            for key, value in (payload.get("scores") or {}).items()
+        }
+
+        if action_name == SCORE_ACTION:
+            option_id = str(payload.get("option_id") or "")
+            # A select_static reports its pick separately from the element's
+            # own value, and the callback folds it into the payload under
+            # "reason" -- the same slot a return-reason picker uses.
+            picked = payload.get("reason")
+            if not option_id or picked is None:
+                raise UnresolvableEffect("vote click carried no option or score")
+            scores[option_id] = int(picked)
+            return {
+                "status": "SCORING",
+                "action_item_id": action_item_id,
+                "scores": scores,
+            }
+
+        result = self.service.submit_question_vote(
+            action_item_id,
+            actor_id=str(actor_id),
+            scores=scores,
+            message_id=str(record["event_key"]),
+        )
+        if self.log is not None:
+            self.log(
+                f"[feishu] {actor_id} voted on {action_item_id} "
+                f"({len(scores)} 项)"
+            )
+        return result
+
     def handle(self, record: dict[str, Any]) -> dict[str, Any]:
         action_name = str(record.get("action_name", ""))
+        if action_name in (SCORE_ACTION, SCORE_SUBMIT):
+            return self._handle_vote(record, action_name)
         if action_name in ASSISTANCE_DECISIONS:
             return self._handle_assistance(record, action_name)
         if action_name not in DECISIONS:

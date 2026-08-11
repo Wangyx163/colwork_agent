@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, messageId, postJson } from "./api";
-import type { ManageState, Task } from "./manage-types";
+import type { ManageState, ReviewHint, Task } from "./manage-types";
 import { buildStrip, formatDay } from "./manage/schedule";
 import { ScheduleStrip } from "./manage/ScheduleStrip";
 import { FinalReport } from "./manage/FinalReport";
@@ -114,6 +114,7 @@ export default function ManagePage() {
 
   const inFlight = tasks.filter((task) => IN_FLIGHT.has(task.status));
   const awaiting = tasks.filter((task) => AWAITING_DISPATCH.has(task.status));
+  const openHints = state.review_hints.filter((hint) => hint.status === "OPEN");
   const toReview = tasks.filter((task) => task.status === "PENDING_ACCEPTANCE");
   const reviewed = tasks.filter((task) => DONE.has(task.status));
   const conflicts = inFlight.filter((task) =>
@@ -189,11 +190,18 @@ export default function ManagePage() {
         n="02"
         name="派发"
         anchor="zone-dispatch"
-        pending={awaiting.length}
-        pendingLabel={`${awaiting.length} 项待派发`}
+        pending={awaiting.length + openHints.length}
+        pendingLabel={`${awaiting.length} 项待派发 · ${openHints.length} 条召回提示`}
         ownerOnly
         why="抽取出来但还没派出去的任务。主负责人和协作者都在这里一次定下——任务负责人事后不能再拉人，只能向指定的人求助。全部被派到的人都接受，任务才进入执行。"
       >
+        {openHints.length ? (
+          <div className="mb-3 grid gap-2">
+            {openHints.map((hint) => (
+              <ReviewHintRow key={hint.hint_id} hint={hint} act={act} />
+            ))}
+          </div>
+        ) : null}
         {awaiting.length ? (
           <div className="grid gap-2">
             {awaiting.map((task) => (
@@ -289,6 +297,128 @@ export default function ManagePage() {
 /* ------------------------------------------------------------------ 01 */
 
 type Act = (run: () => Promise<unknown>, done: string) => Promise<void>;
+
+function ReviewHintRow({
+  hint,
+  act,
+}: {
+  hint: ReviewHint;
+  act: Act;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [deliverable, setDeliverable] = useState(
+    hint.evidence_text || hint.source_quote,
+  );
+  const [acceptance, setAcceptance] = useState("");
+  const [priority, setPriority] = useState("P1");
+  const [when, setWhen] = useState("");
+
+  const materialize = () =>
+    void act(
+      () =>
+        postJson(`/api/review-hints/${hint.hint_id}/materialize`, {
+          title,
+          deliverable,
+          acceptance_criteria: acceptance,
+          work_requirements: deliverable,
+          priority,
+          team_required_by_sim_time: when
+            ? `${when}T17:00:00+10:00`
+            : null,
+          message_id: messageId("materialize-hint"),
+        }),
+      "已添加为待复核任务；现在可以继续补负责人并派发",
+    );
+
+  return (
+    <article className="rounded-md border border-dashed border-accent bg-accent-wash px-3.5 py-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <b className="text-[0.9rem]">可能遗漏的会议行动</b>
+        <Chip tone="warn">提示，不是任务</Chip>
+        <span className="font-mono text-[0.7rem] text-ink-3">
+          {hint.source_timestamp}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-2">
+        {hint.source_quote}
+      </p>
+      {hint.evidence_text && hint.evidence_text !== hint.source_quote ? (
+        <p className="mt-1 text-[0.76rem] text-ink-3">
+          补充上下文：{hint.evidence_text}
+        </p>
+      ) : null}
+      <div className="mt-2">
+        <Button onClick={() => setOpen((value) => !value)}>
+          {open ? "收起" : "添加为任务"}
+        </Button>
+      </div>
+      {open ? (
+        <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
+          <p className="text-[0.76rem] text-ink-3">
+            填完任务名称和交付说明后才会创建任务；打开表单不会改变任何任务状态。
+          </p>
+          <label className="grid gap-1 text-[0.79rem]">
+            任务名称
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <label className="grid gap-1 text-[0.79rem]">
+            交付说明
+            <textarea
+              rows={3}
+              value={deliverable}
+              onChange={(event) => setDeliverable(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <label className="grid gap-1 text-[0.79rem]">
+            验收标准（可稍后补）
+            <input
+              value={acceptance}
+              onChange={(event) => setAcceptance(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="grid gap-1 text-[0.79rem]">
+              优先级
+              <select
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+              >
+                <option value="P0">P0</option>
+                <option value="P1">P1</option>
+                <option value="P2">P2</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-[0.79rem]">
+              团队期望日期（可稍后补）
+              <input
+                type="date"
+                value={when}
+                onChange={(event) => setWhen(event.target.value)}
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+              />
+            </label>
+          </div>
+          <div>
+            <Button
+              disabled={!title.trim() || !deliverable.trim()}
+              onClick={materialize}
+            >
+              确认创建任务
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
 
 /** A task being worked on.
  *

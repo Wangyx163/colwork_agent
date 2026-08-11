@@ -1,7 +1,7 @@
 # P0 分层验收指标契约
 
-版本：1.4  
-变更依据：ADR-026、ADR-030
+版本：1.5
+变更依据：ADR-026、ADR-030、ADR-036
 
 ## 1. 使用原则
 
@@ -88,7 +88,8 @@
 
 ### SIG-EXTRACT-001｜提取与确认
 
-- 输出：抽取任务数、unresolved_fields、identity_key 去重、负责人修订与忽略数。
+- 输出：unit 的唯一 emit-zone 覆盖、context-window 覆盖与 `SUCCEEDED | DEGRADED | FAILED` 分布、按统一 Prompt/规则/并集统计的 raw candidates、draft_items、review_hints、逐候选上下文扩展和校验/降级原因、raw anchor／显式 anchor+support／draft-hint 路由后 evidence 三层金标覆盖、anchor/support/evidence unit 引用量、`LINKED_EVIDENCE_BRIDGE` 引用量、support 裁剪量、第一阶段金标命中项的后处理存活率、unresolved_fields、负责人从 hint/手工添加及修订/合并/忽略数。
+- 评测失败会议按空预测计入全部 FN；无 item-level gold 的语料返回合法 N/A。raw candidate 数只表示工作量，句级 TP/FP/FN 必须先按引用句去重；support/evidence 只报告 recall coverage，不计算 precision/F1，且必须与引用量同时解释。AMC-A 零正例会议只能报告为零标注切片，不得未经产品口径人工标注就命名为零行动项会议。Review Load 不属于当前抽取 Gate，未来若采集真实人工复核耗时，必须作为非阻断 SIGNAL 另立契约。
 
 ### SIG-RESULT-001｜版本、处理与验收
 

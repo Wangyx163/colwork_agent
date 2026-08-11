@@ -1,7 +1,7 @@
 # 多同事会议行动项协作 Agent｜逻辑接口契约
 
-版本：1.8  
-变更依据：ADR-030、ADR-031、ADR-032、ADR-033、ADR-035  
+版本：1.9  
+变更依据：ADR-030、ADR-031、ADR-032、ADR-033、ADR-035、ADR-036  
 说明：冻结语义，不冻结 HTTP 路径、类名或 ORM。
 
 ## API-AUTH-001｜解析可信 Principal
@@ -55,15 +55,17 @@
 ## API-EXTRACT-001｜结构化抽取
 
 - 输入：`{text, adapter_type: TRANSCRIPT|IM_REPLY, schema, run_context}`。
-- 输出候选事实及 source_span、confidence、unresolved_fields；模型只产生候选。
+- 输出 `{raw_candidates[], draft_items[], review_hints[], coverage, failures[]}`。候选发现只引用稳定 unit id；系统据此生成 source_span。`draft_items` 包含可形成任务的最小语义与 unresolved_fields；每条 `review_hint` 具有稳定 hint_ref，并保留上下文扩展后仍不充分的语料及原因。
+- 候选发现使用一套统一宽召回 Prompt 与确定性规则补网取并集；模型读取 `left_context + emit_zone + right_context` 重叠窗口并只为 emit zone 输出候选。证据整理可从全局逐字稿按充分性自适应扩展，不使用固定 unit 数。单候选失败必须隔离或降级为 hint，不得使同批候选或整场会议清空。
+- coverage 必须区分 `SUCCEEDED | DEGRADED | FAILED`，并记录每个 unit 的唯一 emit-zone 责任窗口、context 出现窗口和未覆盖 unit；模型责任窗口失败但规则补网完成时返回 DEGRADED。
 - COORDINATOR 复核并选择主负责人/协作者后才形成版本化派发。
 - 验证：AUTO-API-EXTRACT-001。
 
 ## API-REVIEW-001｜复核并发布行动项
 
-- 逻辑动作：`revise | publish | ignore | merge`；仅 COORDINATOR。
+- 逻辑动作：`revise | publish | ignore | merge | create_from_hint | create_manual`；仅 COORDINATOR。`create_from_hint` 输入必须携带 hint_ref 与人工补充的任务字段。
 - 发布至少需要 title、work_requirements、deliverable_key 和 team_required_by；management_review_policy 仅管理侧可见。
-- source_span 不可修改；合并只追加来源，不建立候选实体。
+- source_span 不可修改；从 hint 添加任务时保留 hint/evidence unit lineage，手工添加时显式标记人工来源。合并只追加来源，不建立候选实体。
 - 验证：AUTO-API-REVIEW-001。
 
 ## API-ASSIGN-001｜派发行动项

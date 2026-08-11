@@ -395,6 +395,34 @@ class FeishuIM:
     def message_for_effect(self, effect_id: str) -> dict[str, Any] | None:
         return self._existing_receipt(effect_id)
 
+    def command_for_effect(self, effect_id: str) -> dict[str, Any] | None:
+        """The notification an effect was built from, for redrawing its card.
+
+        Read back from the Outbox rather than kept in memory: a ballot half
+        filled in survives a restart because the message and the contract both
+        outlive the process that sent them.
+        """
+
+        row = self.database.one(
+            "SELECT effect_id, effect_type, payload FROM outbox_entries "
+            "WHERE effect_id = ?",
+            (effect_id,),
+        )
+        if not row:
+            return None
+        record = dict(row)
+        payload = record["payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        notification = (payload or {}).get("notification")
+        if not notification:
+            return None
+        return {
+            "effect_id": record["effect_id"],
+            "effect_type": record["effect_type"],
+            "notification": notification,
+        }
+
     def update_card(self, effect_id: str, card: dict[str, Any]) -> bool:
         """Replace the card an effect produced. Returns whether one was found.
 

@@ -218,6 +218,36 @@ python -m collab_agent eval-extraction `
 
 输出里的 `tool_use` 记录每次查询、失败调用数和触发轮次上限的片段数；`usage` 把每一轮 token 都算进去。
 
+### 召回优先抽取（默认）
+
+默认 `extract` 和 `--with-project-chain` 已切换到 recall-first v2：逐字稿先生成稳定 unit，按中心责任滑窗做一次广召回，再与确定性规则补网取并集。候选可从整场逐字稿自适应补证据；语义完整的进入 `draft_items`，仍不完整的保存在 `review_hints`。短确认只作为前序动作的支持证据；多义决策词保留在召回网中，但必须有第二证据才能成为 draft。兼容字段 `action_items` 只映射 `draft_items`，所以 hint 不会提前创建任务。旧 v1.4 可用 `extract --legacy` 复跑；`--tools` 仍是旧工具调用对照组。
+
+当前窗口策略是 `800 字左上下文 + 1600 字中心责任区 + 800 字右上下文`。上下文中发现的锚点不会丢弃，而是恢复后按全局锚点去重；显式支持信息受字符预算约束，证据整理可补齐锚点与支持点之间的连续语义桥。这个窗口是召回、调用次数和后续扩展性的工程折中，不是语义上的固定常数；多步骤投票等长线程应在候选层做跨窗口事件串联，而不是无限放大单次窗口。
+
+评测按 meeting 原子写检查点。成功场次续跑时直接复用，失败场次会重试，同时失败仍按空预测计入 FN。AMC-A 没有条目级金标，报告中的 `item_level_detection` 因而是 `null`，而不是误导性的 0。
+
+```powershell
+# 零 token 分开测“宽召回候选”和“可生成 draft 的候选”
+python -m collab_agent eval-extraction `
+  --alimeeting4mug datasets\Alimeeting4MUG --split except_TS_test1 `
+  --with-rule-recall --report evaluation_runs\amc-rule-recall-v2.1.json
+
+# 抽取一场会议；产物同时含 raw_candidates / draft_items / review_hints
+python -m collab_agent extract --input meetings\meeting.txt `
+  --output var\extractions\meeting.json
+
+# 继续跑 AMC-A；默认检查点位于报告旁的 .checkpoints 目录
+python -m collab_agent eval-extraction `
+  --alimeeting4mug datasets\Alimeeting4MUG --split dev `
+  --with-project-chain --report evaluation_runs\amc-recall-v2.json
+
+# 忽略已有成功检查点，整批强制重跑
+python -m collab_agent eval-extraction `
+  --alimeeting4mug datasets\Alimeeting4MUG --split dev `
+  --with-project-chain --no-resume `
+  --report evaluation_runs\amc-recall-v2.json
+```
+
 ---
 
 ## 跨会议关联
@@ -322,7 +352,7 @@ npm run build     # 产物直接写进 src/collab_agent/static/observatory/
 ## 测试与评测
 
 ```powershell
-python -m unittest discover -s tests -v          # 265 个，含飞书适配器契约、崩溃恢复、幂等、权限边界
+python -m unittest discover -s tests -v          # 548 个，含召回窗口、hint 转任务、崩溃恢复、幂等、权限边界
 python -m collab_agent eval --fresh              # 确定性 P0 场景
 python -m collab_agent eval-ai-p0 --fresh        # AI 工程 Harness，零外部调用
 python -m collab_agent eval-product              # 人工成本、引用率、Token、闸口

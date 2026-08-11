@@ -5,7 +5,7 @@
 
 ## 决策
 
-> 以下公开认领规则不再用于新业务表面。ADR-035 保留“抽取结果直接复用同一 ActionItem、不建立 Candidate/Claim 实体”，但以版本化逐人派发和响应替代公开待认领池。
+> 以下公开认领规则不再用于新业务表面。ADR-035 以版本化逐人派发和响应替代公开待认领池；ADR-036 又将“抽取结果直接复用同一 ActionItem”收窄为“只有语义充分的 draft_items 直接创建 ActionItem”。语义不足项只保存在 extraction artifact 的 review_hints 中，仍不建立 Candidate/Claim 领域实体。
 
 百炼抽取出的行动项直接写入 `action_items`，状态为 `PENDING_CONFIRMATION`，
 在负责人复核、发布和同事认领前允许 `published_sim_time`、`owner_actor_id`

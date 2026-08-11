@@ -1,4 +1,4 @@
-版本：1.3  
+版本：1.4  
 上游依据：`01-project-charter.md`
 
 ## 1. 文档优先级
@@ -9,7 +9,7 @@
 
 1. 先阅读 `02-constitution.md` 与 `03-glossary.md`
 2. 再阅读 `04-system-sdd.md`、`05-domain-model.md`、`06-event-catalog.md`、`07-state-machines.md`
-3. 阅读 `adr/ADR-030-minimal-access-signals-schedule-memory.md`、`adr/ADR-031-base-task-first-collaboration-patterns-p1.md`、`adr/ADR-033-interview-ai-engineering-focus.md`、`12-mvp-priority-profile.md` 与 `17-ai-interview-p0-plan-and-model-routing.md`，先实现 P0
+3. 阅读 `adr/ADR-030-minimal-access-signals-schedule-memory.md`、`adr/ADR-031-base-task-first-collaboration-patterns-p1.md`、`adr/ADR-033-interview-ai-engineering-focus.md`、`adr/ADR-036-recall-first-extraction-and-review-hints.md`、`12-mvp-priority-profile.md` 与 `17-ai-interview-p0-plan-and-model-routing.md`，先实现 P0
 4. 按 `specs/` 中 N01–N15 的逻辑依赖实现，但不要求拆成独立服务
 5. 以 `09-acceptance-test-plan.md` 的 P0 场景与 `contracts/metrics-contracts.md` 的 P0 契约验收
 6. 修改冻结规范时，在 `adr/` 追加 ADR；不得直接修改低层文档规避冲突

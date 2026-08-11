@@ -654,6 +654,10 @@ class BailianExtractor:
         self.chunk_overlap_lines = max(0, int(chunk_overlap_lines))
         self.use_tools = bool(use_tools)
         self.max_tool_rounds = max(1, int(max_tool_rounds))
+        # Compact per-call usage retained for callers that orchestrate several
+        # JSON completions (for example recall-window evaluation). Keeping only
+        # usage avoids accumulating full provider payloads across a corpus run.
+        self.json_usage_records: list[dict[str, int | None]] = []
 
     @property
     def prompt_version(self) -> str:
@@ -674,6 +678,20 @@ class BailianExtractor:
         """
 
         payload = self._request(messages)
+        usage = payload.get("usage") if isinstance(payload, dict) else None
+        self.json_usage_records.append(
+            {
+                "prompt_tokens": (
+                    usage.get("prompt_tokens") if isinstance(usage, dict) else None
+                ),
+                "completion_tokens": (
+                    usage.get("completion_tokens") if isinstance(usage, dict) else None
+                ),
+                "total_tokens": (
+                    usage.get("total_tokens") if isinstance(usage, dict) else None
+                ),
+            }
+        )
         content, _ = self._model_payload(payload)
         return content
 
@@ -1441,16 +1459,28 @@ def extract_file(
     model: str | None = None,
     meeting_date: str | None = None,
     use_tools: bool = False,
+    legacy: bool = False,
 ) -> dict[str, Any]:
     source = Path(input_path)
     destination = Path(output_path)
     checkpoint_dir = destination.parent / ".checkpoints" / destination.stem
     transcript = read_text_file(source)
-    result = BailianExtractor(model=model, use_tools=use_tools).extract(
-        transcript,
-        meeting_date=meeting_date,
-        checkpoint_dir=checkpoint_dir,
-    )
+    if legacy or use_tools:
+        result = BailianExtractor(model=model, use_tools=use_tools).extract(
+            transcript,
+            meeting_date=meeting_date,
+            checkpoint_dir=checkpoint_dir,
+        )
+    else:
+        # Imported lazily because recall.py deliberately reuses the proven
+        # provider client and strict action-item validator from this module.
+        from .recall import RecallFirstExtractor
+
+        result = RecallFirstExtractor(model=model).extract(
+            transcript,
+            meeting_date=meeting_date,
+            checkpoint_dir=checkpoint_dir,
+        )
     result["source"] = {
         "filename": source.name,
         "path": str(source.resolve()),

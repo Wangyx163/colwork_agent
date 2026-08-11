@@ -81,6 +81,29 @@ CREATE TABLE IF NOT EXISTS action_items (
     UNIQUE(episode_id, identity_key)
 );
 
+-- Recall evidence that is intentionally below the ActionItem creation bar.
+-- It has no assignment or delivery state; a coordinator must explicitly
+-- materialize it after supplying a usable task definition.
+CREATE TABLE IF NOT EXISTS review_hints (
+    hint_id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    candidate_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('OPEN', 'MATERIALIZED', 'DISMISSED')),
+    source_timestamp TEXT NOT NULL,
+    source_quote TEXT NOT NULL,
+    evidence_text TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    hint_payload TEXT NOT NULL DEFAULT '{}',
+    materialized_action_item_id TEXT REFERENCES action_items(action_item_id),
+    created_sim_time TEXT NOT NULL,
+    resolved_sim_time TEXT,
+    resolved_by_actor_id TEXT REFERENCES actors(actor_id),
+    version INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(episode_id, candidate_id)
+);
+CREATE INDEX IF NOT EXISTS review_hint_status_lookup
+ON review_hints(episode_id, status, created_sim_time);
+
 CREATE TABLE IF NOT EXISTS action_item_assignments (
     assignment_id TEXT PRIMARY KEY,
     action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),

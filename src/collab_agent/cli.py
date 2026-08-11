@@ -77,6 +77,11 @@ def _parser() -> argparse.ArgumentParser:
             "uses a separately versioned prompt and costs extra rounds"
         ),
     )
+    extract.add_argument(
+        "--legacy",
+        action="store_true",
+        help="run the pre-recall-first v1.4 extractor for comparison",
+    )
     meeting = subparsers.add_parser(
         "serve-meeting", help="import extracted action items and serve the collaboration workbench"
     )
@@ -202,6 +207,14 @@ def _parser() -> argparse.ArgumentParser:
         help="also run the one-shot prompt baseline (consumes tokens)",
     )
     extraction_eval.add_argument(
+        "--with-rule-recall",
+        action="store_true",
+        help=(
+            "also score the zero-model rule net twice: raw discovery candidates "
+            "and post-routing draft-ready candidates"
+        ),
+    )
+    extraction_eval.add_argument(
         "--with-project-chain",
         action="store_true",
         help="also run this project's full extraction chain (consumes tokens)",
@@ -216,6 +229,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     extraction_eval.add_argument(
         "--report", default="var/extraction-evaluation.json"
+    )
+    extraction_eval.add_argument(
+        "--checkpoint-dir",
+        default="",
+        help="write one recoverable result per extractor and meeting",
+    )
+    extraction_eval.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="ignore existing per-meeting evaluation checkpoints",
     )
 
     annotation = subparsers.add_parser(
@@ -960,6 +983,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model=args.model,
             meeting_date=args.meeting_date,
             use_tools=args.tools,
+            legacy=args.legacy,
         )
         print(
             json.dumps(
@@ -968,7 +992,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "provider": result["provider"],
                     "model": result["model"],
                     "summary": result["summary"],
-                    "usage": result["usage"],
+                    "usage": result.get("usage"),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1175,6 +1199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             keyword_extractor,
             project_chain_extractor,
             replay_extractor,
+            rule_recall_extractor,
             single_prompt_extractor,
         )
         from .extraction_evaluation import (
@@ -1197,6 +1222,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not meetings:
             print("no labelled meetings were loaded")
             return 1
+        report_path = Path(args.report)
+        checkpoint_dir = (
+            Path(args.checkpoint_dir)
+            if args.checkpoint_dir
+            else report_path.parent / ".checkpoints" / report_path.stem
+        )
+        window_checkpoint_root = (
+            None if args.no_resume else checkpoint_dir / "_windows"
+        )
         # The zero-model floor always runs: it costs nothing and any extractor
         # that cannot beat it is not earning its token spend.
         extractors = {"keyword_floor": keyword_extractor}
@@ -1205,16 +1239,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                 read_text_file(args.predictions)
             )
             extractors["stored_run"] = replay_extractor(stored)
+        if args.with_rule_recall:
+            extractors["rule_raw_candidates"] = rule_recall_extractor(
+                output="raw_candidates"
+            )
+            extractors["rule_draft_items"] = rule_recall_extractor(
+                output="draft_items"
+            )
         if args.with_single_prompt:
             extractors["single_prompt_baseline"] = single_prompt_extractor()
         if args.with_project_chain:
-            extractors["project_chain"] = project_chain_extractor()
+            extractors["project_chain"] = project_chain_extractor(
+                checkpoint_dir=(
+                    str(window_checkpoint_root / "project_chain")
+                    if window_checkpoint_root
+                    else None
+                )
+            )
         if args.with_project_chain_tools:
             extractors["project_chain_tools"] = project_chain_extractor(
-                use_tools=True
+                use_tools=True,
+                checkpoint_dir=(
+                    str(window_checkpoint_root / "project_chain_tools")
+                    if window_checkpoint_root
+                    else None
+                ),
             )
-        report = compare_extractors(meetings, extractors)
-        report_path = Path(args.report)
+        report = compare_extractors(
+            meetings,
+            extractors,
+            checkpoint_dir=checkpoint_dir,
+            resume=not args.no_resume,
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n",
@@ -1222,9 +1278,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         summary = {
             name: {
-                "sentence_f1": result["sentence_level_positive_f1"]["f1"],
-                "item_f1": result["item_level_detection"]["f1"],
+                "sentence_level": result["sentence_level_positive_f1"],
+                "item_f1": (
+                    result["item_level_detection"]["f1"]
+                    if result["item_level_detection"] is not None
+                    else None
+                ),
                 "quote_grounding_rate": result["quote_grounding_rate"],
+                "candidate_workload": result["stage_totals"]["raw_candidates"],
+                "draft_items": result["stage_totals"]["draft_items"],
+                "review_hints": result["stage_totals"]["review_hints"],
+                "amc_zero_label_meetings": result["amc_zero_label_meetings"],
+                "amc_zero_label_meetings_kept_clean": result[
+                    "amc_zero_label_meetings_kept_clean"
+                ],
             }
             for name, result in report["results"].items()
         }

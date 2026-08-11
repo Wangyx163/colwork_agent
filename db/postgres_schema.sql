@@ -82,6 +82,26 @@ CREATE TABLE action_items (
     UNIQUE (episode_id, deliverable_key)
 );
 
+CREATE TABLE review_hints (
+    hint_id TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+    candidate_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('OPEN', 'MATERIALIZED', 'DISMISSED')),
+    source_timestamp TEXT NOT NULL,
+    source_quote TEXT NOT NULL,
+    evidence_text TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    hint_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    materialized_action_item_id TEXT REFERENCES action_items(action_item_id),
+    created_sim_time TIMESTAMPTZ NOT NULL,
+    resolved_sim_time TIMESTAMPTZ,
+    resolved_by_actor_id TEXT REFERENCES actors(actor_id),
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    UNIQUE (episode_id, candidate_id)
+);
+CREATE INDEX review_hint_status_lookup
+    ON review_hints (episode_id, status, created_sim_time);
+
 CREATE TABLE action_item_assignments (
     assignment_id TEXT PRIMARY KEY,
     action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),

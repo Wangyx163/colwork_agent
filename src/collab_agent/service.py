@@ -2007,6 +2007,183 @@ class CoordinationService:
             )
         )
 
+    def materialize_review_hint(
+        self,
+        hint_id: str,
+        *,
+        actor_id: str,
+        title: str,
+        deliverable: str,
+        acceptance_criteria: str,
+        priority: str,
+        message_id: str,
+        team_required_by_sim_time: str | None = None,
+        work_requirements: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an ActionItem only after a coordinator completes a hint.
+
+        A review hint has no task status, owner or delivery workflow.  This is
+        the single explicit boundary that materializes one into the existing
+        ActionItem state machine.
+        """
+
+        self._require_aggregator(actor_id)
+        hint_id = hint_id.strip()
+        title = title.strip()
+        deliverable = deliverable.strip()
+        acceptance_criteria = acceptance_criteria.strip()
+        work_requirements = (
+            work_requirements.strip()
+            if work_requirements is not None
+            else deliverable
+        )
+        priority = priority.strip().upper() or "P1"
+        message_id = message_id.strip()
+        if not hint_id or not message_id:
+            raise ValueError("hint_id and message_id are required")
+        if not title or not deliverable or not work_requirements:
+            raise ValueError("title, deliverable, and work requirements are required")
+        if priority not in {"P0", "P1", "P2"}:
+            raise ValueError("priority must be P0, P1, or P2")
+        team_required_by = (
+            iso_time(team_required_by_sim_time)
+            if team_required_by_sim_time
+            else None
+        )
+        if team_required_by and parse_time(team_required_by) <= parse_time(self.now()):
+            raise ValueError("team required time must be later than the current time")
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        sim_time = self.now()
+        with self.db.transaction() as cursor:
+            hint = cursor.execute(
+                "SELECT * FROM review_hints WHERE hint_id = ? AND episode_id = ?",
+                (hint_id, self.episode_id),
+            ).fetchone()
+            if not hint:
+                raise KeyError(hint_id)
+            if hint["status"] != "OPEN":
+                raise ValueError("only an open review hint can be added as a task")
+            identity_key = stable_hash(
+                [self.episode_id, hint_id, title, deliverable]
+            )
+            action_item_id = f"ai_{identity_key[:20]}"
+            deliverable_key = f"deliverable_{identity_key[:20]}"
+            hint_payload = self._decoded_json(hint["hint_payload"], {}) or {}
+            metadata = {
+                "source_timestamp": hint["source_timestamp"],
+                "source_quote": hint["source_quote"],
+                "deliverable": deliverable,
+                "acceptance_criteria": acceptance_criteria,
+                "work_requirements": work_requirements,
+                "management_review_policy": "",
+                "priority": priority,
+                "confidence": None,
+                "uncertainties": [
+                    "由会议负责人从 review hint 补充并添加为任务"
+                ],
+                "needs_confirmation": True,
+                "suggested_owner_name": None,
+                "suggested_collaborator_names": [],
+                "collaboration_mode": "SOLO",
+                "collaborator_names": [],
+                "collaborator_actor_ids": [],
+                "suggested_deadline_text": None,
+                "suggested_deadline_iso": None,
+                "required_fields": ["summary"],
+                "requires_human_acceptance": True,
+                "origin": "REVIEW_HINT",
+                "review_hint_id": hint_id,
+                "review_hint_candidate_id": hint["candidate_id"],
+                "review_hint_evidence_unit_ids": hint_payload.get(
+                    "evidence_unit_ids", []
+                ),
+            }
+            cursor.execute(
+                """
+                INSERT INTO action_items(
+                    action_item_id, episode_id, identity_key, title,
+                    deliverable_key, owner_actor_id, required, status,
+                    deadline_sim_time, team_required_by_sim_time, sla_id,
+                    source_message_id, source_span, proposal_metadata,
+                    created_sim_time, version
+                ) VALUES (?, ?, ?, ?, ?, NULL, TRUE, ?, NULL, ?,
+                          'sla_default', ?, ?, ?, ?, 1)
+                """,
+                (
+                    action_item_id,
+                    self.episode_id,
+                    identity_key,
+                    title,
+                    deliverable_key,
+                    ActionItemStatus.PENDING_CONFIRMATION,
+                    team_required_by,
+                    f"review_hint:{hint_id}",
+                    hint["source_quote"],
+                    canonical_json(metadata),
+                    sim_time,
+                ),
+            )
+            cursor.execute(
+                "UPDATE review_hints SET status = 'MATERIALIZED', "
+                "materialized_action_item_id = ?, resolved_sim_time = ?, "
+                "resolved_by_actor_id = ?, version = version + 1 "
+                "WHERE hint_id = ?",
+                (action_item_id, sim_time, actor_id, hint_id),
+            )
+            correlation_id = f"corr_{message_id}"
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ReviewHint",
+                aggregate_id=hint_id,
+                event_type="ReviewHintMaterialized",
+                sim_time=sim_time,
+                payload={
+                    "action_item_id": action_item_id,
+                    "materialized_by": actor_id,
+                },
+                correlation_id=correlation_id,
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItem",
+                aggregate_id=action_item_id,
+                event_type="ActionItemProposed",
+                sim_time=sim_time,
+                payload={
+                    "owner_actor_id": None,
+                    "deliverable_key": deliverable_key,
+                    "source_timestamp": hint["source_timestamp"],
+                    "claimable": True,
+                    "origin": "REVIEW_HINT",
+                },
+                correlation_id=correlation_id,
+            )
+            result = {
+                "hint_id": hint_id,
+                "status": "MATERIALIZED",
+                "action_item_id": action_item_id,
+                "title": title,
+                "proposal_metadata": metadata,
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        self.action_config[action_item_id] = {
+            "action_item_id": action_item_id,
+            "title": title,
+            "deliverable_key": deliverable_key,
+            "required_fields": ["summary"],
+        }
+        return result
+
     def revise_action_proposal(
         self,
         action_item_id: str,

@@ -75,8 +75,11 @@ class ContractDrivenRenderingTests(unittest.TestCase):
 
         self.assertEqual(_actions(card), [])
 
-    def test_a_scored_decision_is_sent_to_the_web_not_faked_on_a_card(self) -> None:
-        """Scoring several options is a form, not a tap."""
+    def test_a_ballot_is_scored_on_the_card(self) -> None:
+        """This used to be sent to the web, on the grounds that scoring is a
+        form and a card cannot hold one. A card cannot hold a form's *state*
+        either -- but the message can, so each pick redraws the card with the
+        running scores and the submit appears only when nothing is missing."""
 
         card = build_notification_card(
             _command(
@@ -86,14 +89,50 @@ class ContractDrivenRenderingTests(unittest.TestCase):
                         "name": "SUBMIT_VOTE",
                         "label": "提交评分",
                         "requires_reason": False,
-                        "score_options": [{"option_id": "o1"}, {"option_id": "o2"}],
+                        "score_options": [
+                            {"option_id": "o1", "text": "第一条"},
+                            {"option_id": "o2", "text": "第二条"},
+                        ],
+                        "score_range": [1, 5],
                     }
                 ],
             )
         )
+        rendered = json.dumps(card, ensure_ascii=False)
 
-        self.assertEqual(_actions(card), [])
-        self.assertIn("需要在网页工作台完成", json.dumps(card, ensure_ascii=False))
+        self.assertIn("VOTE_SCORE", rendered)
+        self.assertNotIn("需要在网页工作台完成", rendered)
+        self.assertIn("还有 2 条没打分", rendered)
+        self.assertNotIn(
+            "VOTE_SUBMIT", rendered, "nothing may be submitted while incomplete"
+        )
+
+    def test_the_submit_appears_once_every_option_is_scored(self) -> None:
+        card = build_notification_card(
+            _command(
+                kind="VOTE_REQUIRED",
+                decisions=[
+                    {
+                        "name": "SUBMIT_VOTE",
+                        "label": "提交评分",
+                        "requires_reason": False,
+                        "score_options": [
+                            {"option_id": "o1", "text": "第一条"},
+                            {"option_id": "o2", "text": "第二条"},
+                        ],
+                        "score_range": [1, 5],
+                    }
+                ],
+            ),
+            {"o1": 5, "o2": 3},
+        )
+
+        submit = next(
+            action
+            for action in _actions(card)
+            if action["value"].get("action") == "VOTE_SUBMIT"
+        )
+        self.assertEqual(submit["value"]["scores"], {"o1": 5, "o2": 3})
 
     def test_a_reason_requiring_decision_with_presets_becomes_a_picker(self) -> None:
         card = build_notification_card(

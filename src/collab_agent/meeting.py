@@ -57,8 +57,43 @@ def load_meeting_service(
     items, _ = align_collaboration_evidence(
         items, transcript, authorized_speaker=coordinator_name
     )
-    if not items:
-        raise ValueError("extraction contains no action items")
+    raw_review_hints = extraction.get("review_hints") or []
+    review_hints: list[dict[str, Any]] = []
+    if isinstance(raw_review_hints, list):
+        for index, raw_hint in enumerate(raw_review_hints):
+            if not isinstance(raw_hint, dict):
+                continue
+            source_timestamp = str(raw_hint.get("source_timestamp") or "").strip()
+            source_quote = str(raw_hint.get("source_quote") or "").strip()
+            evidence_text = str(
+                raw_hint.get("evidence_text") or source_quote
+            ).strip()
+            if not source_timestamp or not source_quote or not evidence_text:
+                continue
+            candidate_id = str(
+                raw_hint.get("candidate_id")
+                or stable_hash([index, source_timestamp, source_quote])
+            )
+            hint_id = str(
+                raw_hint.get("hint_id")
+                or f"hint_{stable_hash([candidate_id, source_quote])[:20]}"
+            )
+            review_hints.append(
+                {
+                    **raw_hint,
+                    "hint_id": hint_id,
+                    "candidate_id": candidate_id,
+                    "source_timestamp": source_timestamp,
+                    "source_quote": source_quote[:160],
+                    "evidence_text": evidence_text[:1200],
+                    "reason_code": str(
+                        raw_hint.get("reason_code")
+                        or "MINIMUM_SEMANTICS_UNRESOLVED"
+                    ),
+                }
+            )
+    if not items and not review_hints:
+        raise ValueError("extraction contains no action items or review hints")
     organization_name = organization_name.strip()
     coordinator_name = coordinator_name.strip()
     if not organization_name or not coordinator_name:
@@ -210,6 +245,52 @@ def load_meeting_service(
             (action_item_id, deliverable_key, item_key, item, metadata)
         )
 
+    def insert_review_hints(cursor: Any) -> None:
+        for hint in review_hints:
+            existing_hint = cursor.execute(
+                "SELECT hint_id FROM review_hints WHERE episode_id = ? "
+                "AND candidate_id = ?",
+                (episode_id, hint["candidate_id"]),
+            ).fetchone()
+            if existing_hint:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO review_hints(
+                    hint_id, episode_id, candidate_id, status,
+                    source_timestamp, source_quote, evidence_text, reason_code,
+                    hint_payload, materialized_action_item_id,
+                    created_sim_time, resolved_sim_time, resolved_by_actor_id,
+                    version
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, 1)
+                """,
+                (
+                    hint["hint_id"],
+                    episode_id,
+                    hint["candidate_id"],
+                    hint["source_timestamp"],
+                    hint["source_quote"],
+                    hint["evidence_text"],
+                    hint["reason_code"],
+                    canonical_json(hint),
+                    start,
+                ),
+            )
+            database.append_audit(
+                cursor,
+                run_id=run_id,
+                aggregate_type="ReviewHint",
+                aggregate_id=hint["hint_id"],
+                event_type="ReviewHintImported",
+                sim_time=start,
+                payload={
+                    "candidate_id": hint["candidate_id"],
+                    "reason_code": hint["reason_code"],
+                    "source_timestamp": hint["source_timestamp"],
+                },
+                correlation_id=f"corr_hint_import_{source_key}",
+            )
+
     fixture = {
         "pack_id": f"bailian-meeting-{source_key}",
         "pack_version": "1.0.0",
@@ -306,6 +387,7 @@ def load_meeting_service(
                     payload={"added_fields": added},
                     correlation_id=f"corr_collaboration_backfill_{source_key}",
                 )
+            insert_review_hints(cursor)
         service.reconcile_legacy_collaborator_candidates()
         return service
 
@@ -438,4 +520,5 @@ def load_meeting_service(
                 },
                 correlation_id=correlation_id,
             )
+        insert_review_hints(cursor)
     return service

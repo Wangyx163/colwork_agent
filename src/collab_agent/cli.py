@@ -474,6 +474,7 @@ def _start_feishu_side(
     *,
     dispatch_seconds: float,
     stop: "threading.Event",
+    base_url: str = "",
 ) -> "Callable[[], None]":
     """Run the Feishu listener and dispatcher beside something else.
 
@@ -511,11 +512,17 @@ def _start_feishu_side(
     }
     notifiers = [AssignmentNotifier(one, im, log=flushing_log) for one in served]
     router = MeetingRouter(bridges, served[0].db)
+    from .feishu_registration import Registrar  # noqa: PLC0415
+
     app = FeishuApp(
         config or FeishuConfig(app_id="dry-run", app_secret="dry-run"),
         im,
         episode_id=served[0].episode_id,
         on_action=lambda record: router.handle(record),
+        # Reads the meeting registry each time rather than a list captured
+        # here: a meeting imported while this is running has to be joinable
+        # without a restart, which is the whole point of the Feishu intake.
+        registrar=Registrar(served[0].db, im, base_url=base_url),
     )
     session_id = f"feishu_dispatch_{real_now()}"
 
@@ -1041,6 +1048,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 dispatch_seconds=args.dispatch_seconds,
                 stop=stop,
+                base_url=f"http://{args.host}:{args.port}",
             )
             if args.dry_run:
                 flushing_log("[feishu] dry run: not opening a connection")
@@ -1251,6 +1259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 dispatch_seconds=args.dispatch_seconds,
                 stop=stop,
+                base_url=f"http://{args.host}:{args.port}",
             )
             threading.Thread(
                 target=run_connection, name="feishu-connection", daemon=True

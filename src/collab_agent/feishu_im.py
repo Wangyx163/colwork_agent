@@ -271,8 +271,9 @@ class FeishuIM:
         )
         if not row:
             raise FeishuIdentityUnbound(
-                f"actor {actor_id!r} has no Feishu binding; run "
-                "`collab-agent feishu-bind` before dispatching to this person"
+                f"actor {actor_id!r} has no Feishu binding; ask them to "
+                "@ the bot with the meeting and their name, or run "
+                "`collab-agent feishu-bind`"
             )
         return row["open_id"]
 

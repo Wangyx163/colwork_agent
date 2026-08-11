@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .feishu_cards import build_ack_card
+from .feishu_commands import _payload_of
 from .feishu_config import FeishuConfig
+from .feishu_registration import REGISTRATION_REVOKE_ACTION as REGISTRATION_REVOKE
 from .feishu_im import FeishuIM
 from .models import canonical_json, effect_id
 
@@ -49,12 +51,16 @@ class FeishuApp:
         *,
         episode_id: str = "episode_feishu_mvp",
         on_action: Callable[[dict[str, Any]], None] | None = None,
+        registrar: Any | None = None,
         log: Callable[[str], None] = flushing_log,
     ) -> None:
         self.config = config
         self.im = im
         self.episode_id = episode_id
         self.on_action = on_action
+        # Off unless injected, so every existing caller and every offline test
+        # keeps the read-only reply they had.
+        self.registrar = registrar
         self.log = log
         self._work: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         self._worker: threading.Thread | None = None
@@ -163,6 +169,9 @@ class FeishuApp:
         """
 
         sender_open_id = job["sender_open_id"]
+        if self.registrar is not None:
+            self._register_from_message(job)
+            return
         actor_id = self.im.actor_for_open_id(sender_open_id)
         if actor_id is None:
             # The bootstrap path: someone has to be able to discover their own
@@ -203,6 +212,41 @@ class FeishuApp:
             + (f" chat_id={chat_id}" if chat_id else "")
         )
 
+    def _register_from_message(self, job: dict[str, Any]) -> None:
+        """Bind whoever wrote in, or tell them precisely why not.
+
+        Failures answer with a card too. The previous flow handed back an
+        open_id and left the person to find a coordinator with a terminal, and
+        a self-service path that says only "格式不对" is the same dead end with
+        fewer words.
+        """
+
+        sender_open_id = job["sender_open_id"]
+        try:
+            outcome = self.registrar.handle_message(
+                open_id=sender_open_id,
+                text=str(job.get("text") or ""),
+                sim_time=real_now(),
+            )
+        except Exception as error:  # noqa: BLE001 - a callback never raises
+            self.log(f"[feishu] registration failed: {error!r}")
+            return
+        self._send_raw_card(
+            sender_open_id,
+            outcome["card"],
+            uuid_seed=f"register:{job['message_id']}",
+        )
+        for open_id, card, seed in outcome.get("notify") or []:
+            # The coordinator's copy carries the undo. Sent on the same thread
+            # as the reply so the two cannot get out of order -- being told
+            # somebody joined after they have already acted on it is worse than
+            # being told slowly.
+            self._send_raw_card(open_id, card, uuid_seed=seed)
+        self.log(
+            f"[feishu] registration from {sender_open_id}: "
+            + ("bound " + str(outcome.get("actor_id")) if outcome.get("bound") else "refused")
+        )
+
     def _send_raw_card(
         self, open_id: str, card: dict[str, Any], *, uuid_seed: str
     ) -> None:
@@ -234,7 +278,18 @@ class FeishuApp:
         error: str | None = None
         outcome: Any = None
         try:
-            if self.on_action is not None:
+            if (
+                self.registrar is not None
+                and record["action_name"] == REGISTRATION_REVOKE
+            ):
+                # Not routed to a meeting: a binding belongs to a person, not
+                # to an episode, and the router resolves by task -- which this
+                # click has none of.
+                outcome = self.registrar.revoke(
+                    actor_id=_payload_of(record).get("actor_id", ""),
+                    by_open_id=record["operator_open_id"],
+                )
+            elif self.on_action is not None:
                 outcome = self.on_action(record)
             else:
                 self.log(

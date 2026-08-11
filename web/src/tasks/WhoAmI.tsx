@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getJson, postJson } from "../api";
+import { tokenKey } from "../base";
 
 export interface Actor {
   actor_id: string;
@@ -7,24 +8,29 @@ export interface Actor {
   roles: string[];
 }
 
-const TOKEN_KEY = "collabSessionToken";
+// Both keyed by meeting: signing in to one meeting must not sign you in to
+// another as an actor who does not exist there.
 const ACTOR_KEY = "collabSessionActor";
 
+function actorKey(): string {
+  return `${ACTOR_KEY}:${tokenKey()}`;
+}
+
 export function storedActor(): string {
-  return localStorage.getItem(ACTOR_KEY) || "";
+  return localStorage.getItem(actorKey()) || "";
 }
 
 export function signOut() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(ACTOR_KEY);
+  localStorage.removeItem(tokenKey());
+  localStorage.removeItem(actorKey());
 }
 
 export async function signIn(actor: Actor): Promise<void> {
   const body = await postJson<{ token: string }>("/api/session", {
     actor_id: actor.actor_id,
   });
-  localStorage.setItem(TOKEN_KEY, body.token);
-  localStorage.setItem(ACTOR_KEY, actor.display_name);
+  localStorage.setItem(tokenKey(), body.token);
+  localStorage.setItem(actorKey(), actor.display_name);
 }
 
 /** Switching who you are, in place.

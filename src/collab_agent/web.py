@@ -4,7 +4,9 @@ import json
 import os
 import re
 import socket
+from collections.abc import Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -1477,6 +1479,41 @@ def _project_workbench_state(
     return projected
 
 
+@dataclass(frozen=True)
+class EpisodeConsole:
+    """One meeting, plus the two guards scoped to exactly that meeting.
+
+    Kept together because they must never be mixed: the session provider mints
+    tokens for one episode's actors and the authorization service answers for
+    one episode's roster, so a request served with one meeting's service and
+    another's guard would be checking the wrong room's door.
+    """
+
+    slug: str
+    title: str
+    service: CoordinationService
+    principals: VirtualSessionPrincipalProvider
+    authorization: AuthorizationService
+
+
+def console_for(
+    service: CoordinationService, *, slug: str = "", title: str = ""
+) -> EpisodeConsole:
+    return EpisodeConsole(
+        slug=slug,
+        title=title,
+        service=service,
+        principals=VirtualSessionPrincipalProvider(
+            service.db,
+            episode_id=service.episode_id,
+            secret=os.environ.get("COLWORK_SESSION_SECRET"),
+        ),
+        authorization=AuthorizationService(
+            service.db, episode_id=service.episode_id
+        ),
+    )
+
+
 def serve_dashboard(
     service: CoordinationService,
     *,
@@ -1484,14 +1521,91 @@ def serve_dashboard(
     port: int = 8765,
     result_processing_mode: str = "local",
 ) -> None:
+    """One meeting at the root of the port, the way it has always worked."""
+
+    serve_console(
+        [console_for(service)],
+        host=host,
+        port=port,
+        result_processing_mode=result_processing_mode,
+    )
+
+
+def serve_console(
+    consoles: Sequence[EpisodeConsole],
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    result_processing_mode: str = "local",
+) -> None:
+    """Run the console until the process is stopped."""
+
+    server = build_console_server(
+        consoles,
+        host=host,
+        port=port,
+        result_processing_mode=result_processing_mode,
+    )
+    server.timeout = 1.0
+    try:
+        while True:
+            server.handle_request()
+    finally:
+        server.server_close()
+
+
+def build_console_server(
+    consoles: Sequence[EpisodeConsole],
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    result_processing_mode: str = "local",
+) -> HTTPServer:
+    """Build the server without starting it.
+
+    Split out so something other than a person can drive it: with the loop
+    inlined the only way to exercise a route was to reach past the HTTP layer
+    and call the handler's collaborators directly, which is how the seven
+    field-name mismatches got in -- every one of them lived exactly in the part
+    that was never spoken to over a socket.
+
+    Serve one or many meetings from one port.
+
+    With a single unslugged console every path is where it has always been.
+    With slugged ones each meeting lives under `/<slug>/`, and the first path
+    segment decides which meeting a request belongs to -- resolved once, at the
+    top of each verb, so nothing below has to know there was ever more than
+    one.
+    """
+
     if result_processing_mode not in {"bailian", "local", "disabled"}:
         raise ValueError("invalid result processing mode")
-    principal_provider = VirtualSessionPrincipalProvider(
-        service.db,
-        episode_id=service.episode_id,
-        secret=os.environ.get("COLWORK_SESSION_SECRET"),
-    )
-    authorization = AuthorizationService(service.db, episode_id=service.episode_id)
+    consoles = list(consoles)
+    if not consoles:
+        raise ValueError("at least one meeting is required to serve")
+    by_slug = {console.slug: console for console in consoles if console.slug}
+    if len(by_slug) not in (0, len(consoles)):
+        raise ValueError("either every meeting is slugged or none is")
+    root_console = consoles[0] if not by_slug else None
+
+    def _meeting_index() -> list[dict[str, Any]]:
+        """Enough to pick a door, and nothing from inside the room.
+
+        Deliberately unauthenticated and deliberately thin: a token is minted
+        per meeting, so this list is what somebody needs *before* they have
+        one. It carries no task, no name beyond the coordinator's, and no
+        state.
+        """
+
+        return [
+            {
+                "slug": console.slug,
+                "title": console.title or console.slug,
+                "manage_url": f"/{console.slug}/manage",
+                "tasks_url": f"/{console.slug}/tasks",
+            }
+            for console in consoles
+        ]
 
     approval_path = re.compile(r"^/api/approvals/([^/]+)$")
     action_path = re.compile(
@@ -1560,8 +1674,48 @@ def serve_dashboard(
             self.end_headers()
             self.wfile.write(body)
 
+        def _enter(self) -> EpisodeConsole | None:
+            """Decide which meeting this request is for, once.
+
+            When there are slugs, the first path segment names the meeting and
+            is stripped here -- so every route below matches the same patterns
+            it always did, and no handler has to remember to carry a prefix.
+            Returning the console rather than storing only a service keeps the
+            two guards travelling with it; picking the meeting and then
+            checking somebody else's roster is the one mistake this shape makes
+            impossible.
+            """
+
+            if root_console is not None:
+                self._console = root_console
+                return root_console
+            head, _, rest = self.path.lstrip("/").partition("/")
+            console = by_slug.get(head.split("?")[0])
+            if console is None:
+                return None
+            self.path = "/" + rest
+            self._console = console
+            return console
+
+        def _serve_bundle(self, request_path: str) -> None:
+            from .static_assets import AssetMissing, read_asset  # noqa: PLC0415
+
+            try:
+                body, content_type = read_asset(request_path)
+            except AssetMissing:
+                from .static_assets import MISSING_BUNDLE_PAGE  # noqa: PLC0415
+
+                body, content_type = MISSING_BUNDLE_PAGE, "text/html; charset=utf-8"
+                self.send_response(503)
+            else:
+                self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _principal(self) -> Principal:
-            return principal_provider.resolve_authorization_header(
+            return self._console.principals.resolve_authorization_header(
                 self.headers.get("Authorization")
             )
 
@@ -1577,7 +1731,7 @@ def serve_dashboard(
             # A denied request must not be allowed to fail the response path just
             # because diagnostic persistence is unavailable.
             try:
-                service.record_security_rejection(
+                self._console.service.record_security_rejection(
                     event_type=event_type,
                     actor_id=(principal.actor_id if principal else actor_hint),
                     operation=operation,
@@ -1587,32 +1741,50 @@ def serve_dashboard(
                 return
 
         def do_GET(self) -> None:  # noqa: N802 - standard library API
+            # The bundle is the same 315kB for every meeting, so it is served
+            # before the meeting is resolved. Making it a per-meeting URL would
+            # buy nothing and cost a cache entry per meeting.
+            from .static_assets import ASSET_PREFIX  # noqa: PLC0415
+
+            if self.path == ASSET_PREFIX or self.path.startswith(
+                f"{ASSET_PREFIX}/"
+            ):
+                self._serve_bundle(urlparse(self.path).path)
+                return
+            if by_slug:
+                # The one question that belongs to no single meeting, so it is
+                # answered before a meeting is resolved -- and it is the only
+                # unauthenticated read in the console, which is why the payload
+                # it returns carries nothing from inside a meeting.
+                bare = self.path.split("?")[0]
+                if bare == "/api/meetings":
+                    self._json(200, {"meetings": _meeting_index()})
+                    return
+                if bare.rstrip("/") == "":
+                    self._serve_bundle("/index.html")
+                    return
+            console = self._enter()
+            if console is None:
+                self._json(404, {"error": "unknown_meeting"})
+                return
+            service = console.service
+            principal_provider = console.principals
+            authorization = console.authorization
             parsed = urlparse(self.path)
             from .static_assets import serves as bundle_serves
 
             if parsed.path == "/":
                 # The root is a door, not a page: send people to the one
-                # surface every participant is allowed to open.
+                # surface every participant is allowed to open. Under a slug it
+                # is that meeting's task list, not some other meeting's.
                 self.send_response(302)
-                self.send_header("Location", "/tasks")
+                self.send_header(
+                    "Location", f"/{console.slug}/tasks" if console.slug else "/tasks"
+                )
                 self.send_header("Content-Length", "0")
                 self.end_headers()
             elif bundle_serves(parsed.path):
-                from .static_assets import AssetMissing, read_asset
-
-                try:
-                    body, content_type = read_asset(parsed.path)
-                except AssetMissing:
-                    from .static_assets import MISSING_BUNDLE_PAGE
-
-                    body, content_type = MISSING_BUNDLE_PAGE, "text/html; charset=utf-8"
-                    self.send_response(503)
-                else:
-                    self.send_response(200)
-                self.send_header("Content-Type", content_type)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._serve_bundle(parsed.path)
             elif parsed.path == "/api/observatory":
                 from .observatory import build_observatory
 
@@ -1682,6 +1854,28 @@ def serve_dashboard(
                 self._json(404, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802 - standard library API
+            # The bundle is the same 315kB for every meeting, so it is served
+            # before the meeting is resolved. Making it a per-meeting URL would
+            # buy nothing and cost a cache entry per meeting.
+            from .static_assets import ASSET_PREFIX  # noqa: PLC0415
+
+            if self.path == ASSET_PREFIX or self.path.startswith(
+                f"{ASSET_PREFIX}/"
+            ):
+                self._serve_bundle(urlparse(self.path).path)
+                return
+            if by_slug and self.path.split("?")[0].rstrip("/") in ("", "/"):
+                # The door onto a multi-meeting console: which meetings exist
+                # is the one question that belongs to no single meeting.
+                self._json(200, {"meetings": _meeting_index()})
+                return
+            console = self._enter()
+            if console is None:
+                self._json(404, {"error": "unknown_meeting"})
+                return
+            service = console.service
+            principal_provider = console.principals
+            authorization = console.authorization
             parsed = urlparse(self.path)
             if parsed.path == "/api/session":
                 actor_hint: str | None = None
@@ -2190,15 +2384,9 @@ def serve_dashboard(
             return
 
     try:
-        server = SingleInstanceHTTPServer((host, port), Handler)
+        return SingleInstanceHTTPServer((host, port), Handler)
     except OSError as error:
         raise RuntimeError(
             f"workbench address http://{host}:{port} is already in use; "
             "stop the existing instance before starting another"
         ) from error
-    server.timeout = 1.0
-    try:
-        while True:
-            server.handle_request()
-    finally:
-        server.server_close()

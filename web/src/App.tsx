@@ -1,4 +1,6 @@
+import { pagePath } from "./base";
 import ManagePage from "./Manage";
+import MeetingsPage from "./Meetings";
 import ObservatoryPage from "./Observatory";
 import TasksPage from "./Tasks";
 
@@ -15,14 +17,28 @@ const PAGES = [
   { at: "/tasks", title: "我的任务", render: () => <TasksPage /> },
 ] as const;
 
+/** Only reachable when several meetings share a port: with one meeting the
+ *  server sends the bare root straight to that meeting's task list, so this
+ *  page never renders there. */
+const INDEX_PAGE = {
+  at: "/",
+  title: "会议",
+  render: () => <MeetingsPage />,
+} as const;
+
 /** The bare root lands on the task list: it is the only page every
  *  participant is allowed to open. */
 const DEFAULT_PAGE = PAGES[PAGES.length - 1];
 
 export default function App() {
-  const path = window.location.pathname;
+  // The meeting prefix is stripped first: with several meetings on one port
+  // the path is `/wangyuxiang01/manage`, and matching that against "/manage"
+  // silently lands every page on the task list.
+  const path = pagePath();
   const page =
-    PAGES.find((entry) => path.startsWith(entry.at)) ?? DEFAULT_PAGE;
+    path === "/"
+      ? INDEX_PAGE
+      : (PAGES.find((entry) => path.startsWith(entry.at)) ?? DEFAULT_PAGE);
   document.title = page.title;
   return page.render();
 }

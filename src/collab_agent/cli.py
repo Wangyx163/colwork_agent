@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from .agent_worker import AgentWorker
 from .ai_evaluation import build_ai_p0_report
@@ -118,6 +118,33 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     meeting.add_argument("--dispatch-seconds", type=float, default=2.0)
+
+    console = subparsers.add_parser(
+        "serve-console",
+        help="serve every meeting registered in this database from one port",
+    )
+    console.add_argument("--db", default="var/meeting.sqlite3")
+    console.add_argument("--host", default="127.0.0.1")
+    console.add_argument("--port", type=int, default=8766)
+    console.add_argument(
+        "--result-processing",
+        choices=("bailian", "local", "disabled"),
+        default="local",
+    )
+    console.add_argument(
+        "--postgres",
+        action="store_true",
+        help="use DATABASE_URL from .env.local instead of SQLite",
+    )
+    console.add_argument(
+        "--feishu",
+        action="store_true",
+        help=(
+            "open the Feishu connection too: one connection serves every "
+            "meeting, and a click is routed to the meeting it belongs to"
+        ),
+    )
+    console.add_argument("--dispatch-seconds", type=float, default=2.0)
     agent = subparsers.add_parser(
         "agent-meeting",
         help="run the durable Agent Worker for one imported meeting",
@@ -441,7 +468,7 @@ def _load_meeting_from_args(args: argparse.Namespace) -> tuple[Database, Coordin
 
 
 def _start_feishu_side(
-    service: CoordinationService,
+    services: "CoordinationService | list[CoordinationService]",
     im: object,
     config: object,
     *,
@@ -468,13 +495,27 @@ def _start_feishu_side(
     from .feishu_config import FeishuConfig  # noqa: PLC0415
     from .feishu_notifier import AssignmentNotifier  # noqa: PLC0415
 
-    bridge = AssignmentBridge(service, log=flushing_log)
-    notifier = AssignmentNotifier(service, im, log=flushing_log)
+    from .meeting_router import MeetingRouter  # noqa: PLC0415
+
+    if isinstance(services, list):
+        served = services
+    else:
+        served = [services]
+    if not served:
+        raise ValueError("at least one meeting is required to open Feishu")
+    # One app, one long connection, however many meetings. The bridge stays
+    # single-episode on purpose -- every rule it enforces is answered against
+    # one roster -- so the router above it picks which one a click belongs to.
+    bridges = {
+        one.episode_id: AssignmentBridge(one, log=flushing_log) for one in served
+    }
+    notifiers = [AssignmentNotifier(one, im, log=flushing_log) for one in served]
+    router = MeetingRouter(bridges, served[0].db)
     app = FeishuApp(
         config or FeishuConfig(app_id="dry-run", app_secret="dry-run"),
         im,
-        episode_id=service.episode_id,
-        on_action=lambda record: bridge.handle(record),
+        episode_id=served[0].episode_id,
+        on_action=lambda record: router.handle(record),
     )
     session_id = f"feishu_dispatch_{real_now()}"
 
@@ -486,36 +527,71 @@ def _start_feishu_side(
         approvals really do arrive through the Outbox.
         """
 
-        service.recover_dispatcher(session_id)
+        for one in served:
+            one.recover_dispatcher(session_id)
         while not stop.wait(dispatch_seconds):
-            try:
-                outcome = notifier.notify_once()
-                for skip in outcome["skipped"]:
-                    if not skip["first_report"]:
-                        continue
-                    # Said once, and said as the blocker it is: the task cannot
-                    # leave PENDING_ASSIGNMENT until every assignee responds,
-                    # so an unbound one stalls it.
-                    flushing_log(
-                        f"[feishu] {skip['display_name']} 尚未绑定飞书，"
-                        "卡片发不出去；该任务会一直停在待响应。"
-                        f"绑定：feishu-bind --actor \"{skip['display_name']}\" "
-                        "--open-id ou_xxx"
-                    )
-                delivered = service.dispatch_all(session_id=session_id)
-                if delivered:
-                    flushing_log(f"[feishu] dispatched {delivered} outbox entries")
-            except Exception as error:  # noqa: BLE001 - loop must survive
-                flushing_log(f"[feishu] dispatch failed: {error!r}")
+            # Every meeting on every tick. The Outbox claim is a conditional
+            # update checked by rowcount, so meetings sharing a database
+            # contend on rows rather than on each other, and one meeting
+            # failing must not stop the next one being served.
+            for one, notifier in zip(served, notifiers):
+                try:
+                    outcome = notifier.notify_once()
+                    for skip in outcome["skipped"]:
+                        if not skip["first_report"]:
+                            continue
+                        # Said once, and said as the blocker it is: the task
+                        # cannot leave PENDING_ASSIGNMENT until every assignee
+                        # responds, so an unbound one stalls it.
+                        flushing_log(
+                            f"[feishu] {skip['display_name']} 尚未绑定飞书，"
+                            "卡片发不出去；该任务会一直停在待响应。"
+                            "让他在群里 @ 一下机器人就能自动注册。"
+                        )
+                    delivered = one.dispatch_all(session_id=session_id)
+                    if delivered:
+                        flushing_log(
+                            f"[feishu] dispatched {delivered} outbox entries"
+                        )
+                except Exception as error:  # noqa: BLE001 - loop must survive
+                    flushing_log(f"[feishu] dispatch failed: {error!r}")
 
     threading.Thread(
         target=dispatch_loop, name="feishu-dispatch", daemon=True
     ).start()
     flushing_log(
-        f"[feishu] serving episode {service.episode_id}; "
+        f"[feishu] serving {len(served)} meeting(s); "
         f"bindings={len(im.bindings())}"  # type: ignore[attr-defined]
     )
     return app.run
+
+
+def _register_meeting(
+    database: Any, service: CoordinationService, args: Any
+) -> str:
+    """Record how this meeting was loaded, and give it its URL.
+
+    Called from `serve-meeting` rather than from a separate step, because the
+    arguments that describe a meeting are only all in one place at the moment
+    somebody serves it. A meeting that was served once can then be brought back
+    by `serve-console` without anybody retyping five flags.
+    """
+
+    from . import episode_registry  # noqa: PLC0415
+
+    source = episode_registry.register(
+        database,
+        episode_id=service.episode_id,
+        extraction_path=args.extraction,
+        transcript_path=args.transcript,
+        organization_name=args.organization,
+        coordinator_name=args.coordinator,
+        participant_names=list(args.participant),
+        timezone="Australia/Sydney",
+        sim_time=service.now(),
+        title=episode_registry.title_from_extraction(args.extraction),
+    )
+    return source.slug
 
 
 def _catch_clock_up(service: CoordinationService) -> None:
@@ -958,6 +1034,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 im=im,
             )
             _catch_clock_up(service)
+            _register_meeting(database, service, args)
             run_connection = _start_feishu_side(
                 service,
                 im,
@@ -1044,6 +1121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ).start()
         elif args.result_processing == "disabled":
             database, service = _load_meeting_from_args(args)
+            _register_meeting(database, service, args)
         else:
             # A worker runs on its own thread, so the database is opened per
             # thread for the same reason the Feishu runtime does it: a SQLite
@@ -1064,6 +1142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 participant_names=args.participant,
             )
             _catch_clock_up(service)
+            _register_meeting(database, service, args)
 
         if args.result_processing != "disabled":
             worker = AgentWorker(
@@ -1089,6 +1168,125 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             serve_dashboard(
                 service,
+                host=args.host,
+                port=args.port,
+                result_processing_mode=args.result_processing,
+            )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            stop.set()
+            database.close()
+        return 0
+    if args.command == "serve-console":
+        import threading
+
+        from . import episode_registry
+        from .thread_local_store import ThreadLocalDatabase
+        from .web import console_for, serve_console
+
+        factory = _database_factory(args, allow_cross_thread=True)
+        bootstrap = factory()
+        bootstrap.initialize()
+        bootstrap.close()
+        database = ThreadLocalDatabase(factory)
+        stop = threading.Event()
+
+        sources = episode_registry.list_sources(database)
+        if not sources:
+            print(
+                "这个库里还没有注册过的会议。先用 serve-meeting 起一次，"
+                "它会把这场会记下来。"
+            )
+            database.close()
+            return 1
+
+        config, im = (None, None)
+        if args.feishu:
+            config, im = _build_feishu_im(database, dry_run=False)
+
+        consoles = []
+        services = []
+        missing = []
+        for source in sources:
+            if not source.files_present:
+                # Named rather than skipped silently: a meeting whose files
+                # moved looks exactly like a meeting that was never served, and
+                # the difference is what somebody needs to know to fix it.
+                missing.append(source)
+                continue
+            service = load_meeting_service(
+                database,
+                extraction_path=source.extraction_path,
+                transcript_path=source.transcript_path,
+                organization_name=source.organization_name,
+                coordinator_name=source.coordinator_name,
+                participant_names=source.participant_names,
+                timezone=source.timezone,
+                im=im,
+            )
+            _catch_clock_up(service)
+            services.append(service)
+            consoles.append(
+                console_for(
+                    service,
+                    slug=source.slug,
+                    title=source.title or f"{source.coordinator_name}的会议",
+                )
+            )
+        for source in missing:
+            print(
+                f"跳过 {source.slug}：抽取或逐字稿文件不在了"
+                f"（{source.extraction_path}）"
+            )
+        if not consoles:
+            print("注册过的会议一场都载入不了。")
+            database.close()
+            return 1
+
+        if args.feishu:
+            run_connection = _start_feishu_side(
+                services,
+                im,
+                config,
+                dispatch_seconds=args.dispatch_seconds,
+                stop=stop,
+            )
+            threading.Thread(
+                target=run_connection, name="feishu-connection", daemon=True
+            ).start()
+
+        if args.result_processing != "disabled":
+            # One worker per meeting: processing is per episode, and a single
+            # worker would have to be told which meeting to look at anyway.
+            for service in services:
+                worker = AgentWorker(
+                    service, processing_mode=args.result_processing
+                )
+
+                def process_loop(worker: AgentWorker = worker) -> None:
+                    worker.recover()
+                    while not stop.wait(args.dispatch_seconds):
+                        try:
+                            worker.run_until_idle(max_steps=20)
+                        except Exception as error:  # noqa: BLE001
+                            print(
+                                f"[worker] processing failed: {error!r}",
+                                flush=True,
+                            )
+
+                threading.Thread(
+                    target=process_loop,
+                    name=f"processing-{service.episode_id[-8:]}",
+                    daemon=True,
+                ).start()
+
+        print(f"会议控制台：http://{args.host}:{args.port}/")
+        for console in consoles:
+            print(f"  http://{args.host}:{args.port}/{console.slug}/manage")
+        try:
+            serve_console(
+                consoles,
                 host=args.host,
                 port=args.port,
                 result_processing_mode=args.result_processing,

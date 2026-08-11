@@ -108,6 +108,9 @@ class WriteRoutesAreReachableTests(unittest.TestCase):
             "/api/session",
             "/api/session/actors",
             "/api/observatory",
+            # Above every meeting rather than inside one, so it is not in the
+            # per-meeting route table the other side of this check reads.
+            "/api/meetings",
         }
         called = wired_calls()
 

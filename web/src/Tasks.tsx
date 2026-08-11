@@ -12,11 +12,13 @@ import { MyTaskCard, type Act } from "./tasks/MyTaskCard";
 import { VotePanel } from "./tasks/VotePanel";
 import { CompoundPanel } from "./tasks/CompoundPanel";
 
+import { tokenKey } from "./base";
+
 const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
 
 export default function TasksPage() {
   const [ready, setReady] = useState(() =>
-    Boolean(localStorage.getItem("collabSessionToken")),
+    Boolean(localStorage.getItem(tokenKey())),
   );
   const [state, setState] = useState<ManageState | null>(null);
   const [error, setError] = useState("");

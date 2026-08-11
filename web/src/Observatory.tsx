@@ -10,7 +10,7 @@ import {
   TokenPanel,
 } from "./panels";
 import type { Observatory } from "./types";
-import { authHeaders } from "./api";
+import { apiUrl, authHeaders } from "./api";
 
 export default function ObservatoryPage() {
   const [data, setData] = useState<Observatory | null>(null);
@@ -25,7 +25,7 @@ export default function ObservatoryPage() {
       ? `?run_id=${encodeURIComponent(target.run)}&episode_id=${encodeURIComponent(target.episode)}`
       : "";
     let cancelled = false;
-    fetch(`/api/observatory${query}`, { headers: authHeaders() })
+    fetch(apiUrl(`/api/observatory${query}`), { headers: authHeaders() })
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.message || "读取失败");

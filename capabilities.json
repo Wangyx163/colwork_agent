@@ -97,6 +97,11 @@
         "note": "/tasks /manage /diagnostics",
         "verified_by": "tests/test_auth.py"
       },
+      "MANUAL_ACTION_ITEM_ENTRY": {
+        "status": "DONE",
+        "note": "会议负责人在 /manage 派发区手工补一条抽取没抽到的任务。落在 PENDING_CONFIRMATION、无负责人，走和抽取候选完全相同的派发流程；proposal_metadata.origin 记 COORDINATOR_ADDED，前端标「人工补录」——抽取的引文经过逐字稿时间点核对，补录的没有，两者不能在审计里长成一个样子。",
+        "verified_by": "tests/test_manual_action_item.py"
+      },
       "FEISHU_LONG_CONNECTION": {
         "status": "DONE",
         "requires_extra": "feishu",

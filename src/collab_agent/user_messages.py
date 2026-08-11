@@ -48,6 +48,12 @@ USER_MESSAGES: dict[str, str] = {
     'only a task being worked on may have its description amended': (
         '只有正在处理中的任务可以修改任务描述'
     ),
+    'title and deliverable are required': (
+        '标题和交付物为必填项'
+    ),
+    'say where in the meeting this came from': (
+        '请写明这条任务在会上是从哪儿来的'
+    ),
     'title and description are required': (
         '标题和描述为必填项'
     ),
@@ -137,6 +143,15 @@ USER_MESSAGES: dict[str, str] = {
     ),
     'only the meeting coordinator may manage action items': (
         '只有会议协调人可以管理行动项'
+    ),
+    'only the meeting coordinator may perform this action': (
+        '只有会议负责人可以执行此操作'
+    ),
+    'only the task executor may perform this action': (
+        '只有任务负责人可以执行此操作'
+    ),
+    'only the task executor or an active collaborator may perform this action': (
+        '只有任务负责人或在场的协作者可以执行此操作'
     ),
     'only a meeting participant may perform this action': (
         '只有会议参与者可以执行此操作'

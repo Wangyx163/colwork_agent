@@ -1343,6 +1343,9 @@ def _project_workbench_state(
                 "collaboration_mode",
                 "collaborator_names",
                 "collaboration_structure",
+                # So a reader can tell a checked transcript quote from a note
+                # somebody typed. Without it the two are the same grey line.
+                "origin",
             )
             if key in metadata
         }
@@ -1505,6 +1508,7 @@ def serve_dashboard(
         r"^/api/assistance/([^/]+)/(acknowledge|resolve|cancel)$"
     )
     final_generate_path = re.compile(r"^/api/final/generate$")
+    action_add_path = re.compile(r"^/api/action-items$")
     memory_declare_path = re.compile(r"^/api/memories/declare$")
     memory_path = re.compile(
         r"^/api/memories/([^/]+)/(confirm|replace|reject|withdraw)$"
@@ -1702,12 +1706,16 @@ def serve_dashboard(
                     )
                     self._json(
                         403,
-                        {"error": "AUTHORIZATION", "message": str(error)},
+                        # The audit above keeps the English on purpose; what a
+                        # person sees is a different job, and this branch was
+                        # the one 403 still answering in it.
+                        {"error": "AUTHORIZATION", "message": user_message(error)},
                     )
                 return
             approval_match = approval_path.match(parsed.path)
             final_generate_match = final_generate_path.match(parsed.path)
             action_match = action_path.match(parsed.path)
+            action_add_match = action_add_path.match(parsed.path)
             review_hint_match = review_hint_path.match(parsed.path)
             collaboration_structure_match = collaboration_structure_path.match(
                 parsed.path
@@ -1729,6 +1737,7 @@ def serve_dashboard(
                 not approval_match
                 and not final_generate_match
                 and not action_match
+                and not action_add_match
                 and not review_hint_match
                 and not collaboration_structure_match
                 and not structure_revoke_match
@@ -1837,6 +1846,22 @@ def serve_dashboard(
                         comment=payload.get("comment", ""),
                     )
                     service.dispatch_all(session_id="workbench_dispatcher")
+                elif action_add_match:
+                    authorization.require_coordinator(principal)
+                    result = service.add_action_item(
+                        actor_id=principal.actor_id,
+                        title=payload.get("title", ""),
+                        deliverable=payload.get("deliverable", ""),
+                        source_note=payload.get("source_note", ""),
+                        acceptance_criteria=payload.get("acceptance_criteria", ""),
+                        priority=payload.get("priority", "P1"),
+                        team_required_by_sim_time=payload.get(
+                            "team_required_by_sim_time"
+                        ),
+                        message_id=self._message_id(payload),
+                    )
+                    self._json(200, result)
+                    return
                 elif final_generate_match:
                     authorization.require_coordinator(principal)
                     # `aggregate` itself will happily summarise a half-finished

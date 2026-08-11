@@ -141,6 +141,26 @@ if len(todo) >= 3:
     )
     step("把重复的候选合并", code == 200, str(code))
 
+code, body = call(
+    "POST",
+    "/api/action-items",
+    {
+        "title": "补一条抽取没抽到的",
+        "deliverable": "一页说明",
+        "source_note": "散会前口头提的，逐字稿里没录到",
+        "acceptance_criteria": "写清楚就行",
+        "priority": "P2",
+        "message_id": "fc-manual-add",
+    },
+    lead,
+)
+step("会议负责人手动补录一条任务", code == 200, f"{code} {str(body.get('message'))[:60]}")
+step(
+    "补录的任务标着人工来源，不冒充抽取",
+    (body or {}).get("origin") == "COORDINATOR_ADDED",
+    str(body)[:70],
+)
+
 print("\n=== 2. 复核与派发 ===")
 task = todo[0]
 tid = task["action_item_id"]

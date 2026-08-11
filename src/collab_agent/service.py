@@ -2513,6 +2513,140 @@ class CoordinationService:
             )
         return result
 
+    def add_action_item(
+        self,
+        *,
+        actor_id: str,
+        title: str,
+        deliverable: str,
+        source_note: str,
+        message_id: str,
+        acceptance_criteria: str = "",
+        priority: str = "P1",
+        team_required_by_sim_time: str | None = None,
+    ) -> dict[str, Any]:
+        """Add a task the extraction missed, by hand.
+
+        Extraction can only propose what it recognised, and a meeting always
+        says something it did not. Without this the only ways past a miss were
+        to leave the work untracked or to distort a neighbouring task into
+        covering it.
+
+        What it must not do is pretend to be extraction. An extracted item
+        carries a quote that has been checked against the transcript at its own
+        timestamp; this one carries whatever the coordinator remembers, which
+        is a different kind of evidence and is recorded as one -- `origin` says
+        a person added it, and the note they wrote stands where a verified
+        quote would otherwise be. A reader auditing where a task came from can
+        tell the two apart, which is the whole point of keeping the trail.
+        """
+
+        self._require_aggregator(actor_id)
+        title = title.strip()
+        deliverable = deliverable.strip()
+        source_note = source_note.strip()
+        if not title or not deliverable:
+            raise ValueError("title and deliverable are required")
+        if not source_note:
+            raise ValueError("say where in the meeting this came from")
+        priority = priority.strip().upper() or "P1"
+        if priority not in {"P0", "P1", "P2"}:
+            raise ValueError("priority must be P0, P1, or P2")
+        if not message_id.strip():
+            raise ValueError("message_id is required")
+        team_required_by = (
+            iso_time(team_required_by_sim_time)
+            if team_required_by_sim_time
+            else None
+        )
+        if team_required_by and parse_time(team_required_by) <= parse_time(self.now()):
+            raise ValueError("team required time must be later than the current time")
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+        action_item_id = f"ai_{uuid4().hex[:20]}"
+        deliverable_key = f"manual_{uuid4().hex[:12]}"
+        metadata = {
+            "source_timestamp": None,
+            "source_quote": source_note,
+            "deliverable": deliverable,
+            "acceptance_criteria": acceptance_criteria.strip(),
+            "work_requirements": deliverable,
+            "management_review_policy": "",
+            "priority": priority,
+            "confidence": None,
+            "uncertainties": ["由会议负责人手工补录，没有可校验的逐字稿引文"],
+            "needs_confirmation": True,
+            "suggested_owner_name": None,
+            "suggested_collaborator_names": [],
+            "collaboration_mode": "SOLO",
+            "collaborator_names": [],
+            "collaborator_actor_ids": [],
+            "suggested_deadline_text": None,
+            "suggested_deadline_iso": None,
+            "required_fields": ["summary"],
+            "requires_human_acceptance": True,
+            "origin": "COORDINATOR_ADDED",
+            "added_by_actor_id": actor_id,
+        }
+        with self.db.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO action_items(
+                    action_item_id, episode_id, identity_key, title,
+                    deliverable_key, owner_actor_id, required, status,
+                    deadline_sim_time, team_required_by_sim_time, sla_id,
+                    source_message_id, source_span, proposal_metadata,
+                    created_sim_time, version
+                ) VALUES (?, ?, ?, ?, ?, NULL, TRUE, ?, NULL, ?,
+                          'sla_default', ?, ?, ?, ?, 1)
+                """,
+                (
+                    action_item_id,
+                    self.episode_id,
+                    stable_hash([self.episode_id, None, deliverable_key]),
+                    title,
+                    deliverable_key,
+                    ActionItemStatus.PENDING_CONFIRMATION,
+                    team_required_by,
+                    message_id,
+                    source_note,
+                    canonical_json(metadata),
+                    sim_time,
+                ),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItem",
+                aggregate_id=action_item_id,
+                event_type="ActionItemAddedByCoordinator",
+                sim_time=sim_time,
+                payload={
+                    "added_by": actor_id,
+                    "title": title,
+                    "deliverable": deliverable,
+                    "source_note": source_note,
+                },
+                correlation_id=correlation_id,
+            )
+            result = {
+                "action_item_id": action_item_id,
+                "title": title,
+                "status": ActionItemStatus.PENDING_CONFIRMATION,
+                "origin": "COORDINATOR_ADDED",
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
+
     def dispatch_action(
         self,
         action_item_id: str,

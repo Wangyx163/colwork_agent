@@ -195,6 +195,9 @@ export default function ManagePage() {
         ownerOnly
         why="抽取出来但还没派出去的任务。主负责人和协作者都在这里一次定下——任务负责人事后不能再拉人，只能向指定的人求助。全部被派到的人都接受，任务才进入执行。"
       >
+        <div className="mb-3">
+          <ManualAdd act={act} />
+        </div>
         {openHints.length ? (
           <div className="mb-3 grid gap-2">
             {openHints.map((hint) => (
@@ -420,6 +423,132 @@ function ReviewHintRow({
   );
 }
 
+
+/** Entering a task the extraction did not propose.
+ *
+ *  Every other task on this page arrived with a quote that was checked against
+ *  the transcript at its own timestamp. This one cannot have that, so the form
+ *  asks for the next best thing and says so plainly rather than presenting an
+ *  empty box that looks like the same kind of evidence. The card is drawn in
+ *  the dashed treatment the recall hints use, because both are "not yet a task
+ *  the meeting produced".
+ */
+function ManualAdd({ act }: { act: Act }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [deliverable, setDeliverable] = useState("");
+  const [note, setNote] = useState("");
+  const [acceptance, setAcceptance] = useState("");
+  const [priority, setPriority] = useState("P1");
+  const [when, setWhen] = useState("");
+
+  const submit = () =>
+    void act(async () => {
+      await postJson("/api/action-items", {
+        title,
+        deliverable,
+        source_note: note,
+        acceptance_criteria: acceptance,
+        priority,
+        team_required_by_sim_time: when ? `${when}T17:00:00+10:00` : null,
+        message_id: messageId("add-action-item"),
+      });
+      setOpen(false);
+      setTitle("");
+      setDeliverable("");
+      setNote("");
+      setAcceptance("");
+      setWhen("");
+    }, "已加入待派发；它会标注为人工补录");
+
+  return (
+    <article className="rounded-md border border-dashed border-rule-2 px-3.5 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <b className="text-[0.9rem]">手动补一条任务</b>
+          <Chip>抽取没抽到的</Chip>
+        </div>
+        <Button onClick={() => setOpen((value) => !value)}>
+          {open ? "收起" : "补录任务"}
+        </Button>
+      </div>
+      {open ? (
+        <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
+          <p className="text-[0.76rem] leading-relaxed text-ink-3">
+            抽取出来的任务都带一句逐字稿原文，且系统核对过它确实出现在那个时间点。
+            手动补的没有这层核对，所以它会被标成「人工补录」，请写清楚会上是从哪儿来的。
+          </p>
+          <label className="grid gap-1 text-[0.79rem]">
+            任务名称
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <label className="grid gap-1 text-[0.79rem]">
+            交付说明
+            <textarea
+              rows={3}
+              value={deliverable}
+              onChange={(event) => setDeliverable(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <label className="grid gap-1 text-[0.79rem]">
+            会上从哪儿来的（必填）
+            <input
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="例：散会前口头补的，逐字稿里没有"
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <label className="grid gap-1 text-[0.79rem]">
+            验收标准（可稍后补）
+            <input
+              value={acceptance}
+              onChange={(event) => setAcceptance(event.target.value)}
+              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="grid gap-1 text-[0.79rem]">
+              优先级
+              <select
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+              >
+                <option value="P0">P0</option>
+                <option value="P1">P1</option>
+                <option value="P2">P2</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-[0.79rem]">
+              团队期望日期（可稍后补）
+              <input
+                type="date"
+                value={when}
+                onChange={(event) => setWhen(event.target.value)}
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+              />
+            </label>
+          </div>
+          <div>
+            <Button
+              disabled={!title.trim() || !deliverable.trim() || !note.trim()}
+              onClick={submit}
+            >
+              确认补录
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 /** A task being worked on.
  *
  *  The only thing changeable from here is what the task *says*, and only by
@@ -591,6 +720,12 @@ function DispatchRow({
         ) : (
           <Chip>待派发</Chip>
         )}
+        {/* Not decoration: 会议出处 below reads the same either way, and only
+            this says whether that line was checked against the transcript. */}
+        {(task.proposal_metadata as { origin?: string } | undefined)?.origin ===
+        "COORDINATOR_ADDED" ? (
+          <Chip>人工补录</Chip>
+        ) : null}
       </div>
       <div className="tabular mt-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-[0.71rem] text-ink-3">
         <span>

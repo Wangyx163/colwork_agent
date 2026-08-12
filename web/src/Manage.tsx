@@ -238,7 +238,6 @@ export default function ManagePage() {
         )}
       </Zone>
 
-      <CompoundDeclare state={state} act={act} />
 
       {/* StructurePanel is deliberately not rendered. It declares the same
           idea as the compound task -- collect, merge, vote, finalise -- out
@@ -310,6 +309,11 @@ export default function ManagePage() {
 
       {/* 04 --------------------------------------------------------------- */}
       <FinalZone state={state} act={act} />
+
+      {/* After the stages, not between them: it is a tool the coordinator
+          reaches for, and it sat between 派发 and 验收 interrupting the
+          sequence those numbers describe. */}
+      <CompoundDeclare state={state} act={act} />
     </div>
   );
 }

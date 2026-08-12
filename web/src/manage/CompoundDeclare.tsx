@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { messageId, postJson } from "../api";
 import type { ManageState } from "../manage-types";
-import { Blank, Zone } from "./Zone";
+import { Zone } from "./Zone";
 
 type Act = (run: () => Promise<unknown>, done: string) => Promise<void>;
 
@@ -68,35 +68,61 @@ export function CompoundDeclare({
     <Zone
       n=""
       tool
-      name="建一个复合任务"
+      // The section is named for the thing, not the act. Naming it "建一个
+      // 复合任务" put the same six characters on the heading and on the button
+      // under it, which reads as two controls until you try both.
+      name="复合任务"
       anchor="zone-compound"
       pending={declared.filter((task) => task.stage !== "DONE").length}
       pendingLabel={`${declared.length} 项已建`}
       ownerOnly
+      action={
+        open ? null : (
+          <button
+            onClick={() => setOpen(true)}
+            className="rounded border border-rule px-2.5 py-1 font-mono text-[0.76rem] text-ink-2 hover:border-ink hover:text-ink"
+          >
+            ＋ 建一个
+          </button>
+        )
+      }
     >
       {declared.length ? (
-        <ul className="mb-3 grid gap-1.5">
+        <ul className="grid gap-1.5">
           {declared.map((task) => (
             <li
               key={task.compound_task_id}
-              className="flex flex-wrap items-baseline justify-between gap-2 rounded border border-rule px-2.5 py-1.5"
+              className="rounded border border-rule-2 bg-raise px-3 py-2.5"
             >
-              <span className="text-[0.85rem] font-medium text-ink">
-                {task.title}
-              </span>
-              <span className="font-mono text-[0.7rem] text-ink-3">
-                {task.kind === "VOTE" ? "投票型" : "提交型"} · 现在{" "}
-                {task.stage} · {task.answered_count}/{task.member_count} 已交
-              </span>
+              <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                <span className="text-[0.85rem] font-medium text-ink">
+                  {task.title}
+                </span>
+                <span className="rounded-full bg-sunk px-2 py-px font-mono text-[0.7rem] text-ink-3">
+                  {task.kind === "VOTE" ? "投票型" : "提交型"}
+                </span>
+                <span className="tabular ml-auto font-mono text-[0.7rem] text-ink-3">
+                  {task.answered_count}/{task.member_count} 已交
+                </span>
+              </div>
+              {/* The stage track is the whole reason this is not a task card:
+                  a task has one state, this has an order of play, and where it
+                  has got to is the only thing a reader wants at a glance. */}
+              <StageTrack kind={task.kind} stage={task.stage} />
             </li>
           ))}
         </ul>
-      ) : (
-        <Blank>还没有复合任务。</Blank>
+      ) : open ? null : (
+        // No empty box. A tool with nothing in it is its own trigger, and a
+        // large "还没有复合任务。" panel gave an unused control more of the
+        // page than the work above it.
+        <p className="text-[0.8rem] text-ink-3">
+          会上说好「各自出一份 → 一个人汇总 → 大家投票 → 那个人定稿」的事，在这里建。
+        </p>
       )}
 
       {open ? (
-        <div className="grid gap-3 rounded-lg border border-rule bg-paper-2 p-3">
+        <div className="mt-3 grid gap-3 rounded-lg border border-rule bg-raise p-3">
           <div className="flex flex-wrap gap-2">
             {(["VOTE", "SUBMIT"] as const).map((option) => (
               <button
@@ -242,14 +268,63 @@ export function CompoundDeclare({
             </button>
           </div>
         </div>
-      ) : (
-        <button
-          onClick={() => setOpen(true)}
-          className="rounded border border-dashed border-rule px-3 py-1.5 font-mono text-[0.78rem] text-ink-2 hover:border-ink hover:text-ink"
-        >
-          ＋ 建一个复合任务
-        </button>
-      )}
+      ) : null}
     </Zone>
+  );
+}
+
+/** Where a compound task has got to, as a track rather than a word.
+ *
+ *  A task has one status and a compound task has an order of play; showing
+ *  only the current stage name ("MERGING") tells a reader neither what came
+ *  before it nor how much is left. The track is also what makes these rows
+ *  read as a different kind of thing from the task cards above them without
+ *  needing a different colour to say so.
+ */
+function StageTrack({ kind, stage }: { kind: string; stage: string }) {
+  const order: string[] =
+    kind === "VOTE"
+      ? ["COLLECTING", "MERGING", "VOTING", "FINALIZING"]
+      : ["COLLECTING", "MERGING"];
+  const names: Record<string, string> = {
+    COLLECTING: "填写",
+    MERGING: "汇总",
+    VOTING: "投票",
+    FINALIZING: "定稿",
+  };
+  const done = stage === "DONE";
+  const at = order.indexOf(stage);
+
+  if (stage === "REVOKED") {
+    return (
+      <p className="mt-1.5 font-mono text-[0.72rem] text-ink-3">已撤销</p>
+    );
+  }
+  return (
+    <ol className="mt-1.5 flex flex-wrap items-center gap-1 font-mono text-[0.72rem]">
+      {order.map((step, index) => {
+        const passed = done || index < at;
+        const here = !done && index === at;
+        return (
+          <li key={step} className="flex items-center gap-1">
+            <span
+              className={
+                here
+                  ? "rounded bg-accent-wash px-1.5 py-px text-accent"
+                  : passed
+                    ? "px-1.5 py-px text-ink-3 line-through decoration-rule"
+                    : "px-1.5 py-px text-ink-3"
+              }
+            >
+              {names[step] ?? step}
+            </span>
+            {index < order.length - 1 ? (
+              <span className="text-rule-2">›</span>
+            ) : null}
+          </li>
+        );
+      })}
+      {done ? <li className="ml-1 text-ok">已完成</li> : null}
+    </ol>
   );
 }

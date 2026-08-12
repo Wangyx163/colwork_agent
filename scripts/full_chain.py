@@ -14,8 +14,17 @@ therefore a failure, not an omission somebody has to notice.
 
 Usage -- against a throwaway database, never real data:
 
-    python -m collab_agent serve-meeting --db var/full-chain.sqlite3         --port 8799 --extraction ... --transcript ... --participant ...
+    python -m collab_agent serve-meeting --db var/full-chain.sqlite3
+        --port 8799 --extraction fixtures/full_chain_extraction.json
+        --transcript fixtures/full_chain_transcript.txt
+        --organization 试跑 --coordinator 甲
+        --participant 甲 --participant 乙 --participant 丙
     python scripts/full_chain.py 8799
+
+That fixture rather than any other: the run needs at least six dispatchable
+tasks to finish, and it is the only one carrying a review hint -- without which
+the materialize route cannot be reached, and the coverage check at the end
+fails on a fixture shortfall rather than on a real gap.
 """
 
 from __future__ import annotations
@@ -140,6 +149,27 @@ if len(todo) >= 3:
         lead,
     )
     step("把重复的候选合并", code == 200, str(code))
+
+state = call("GET", "/api/state?surface=manage", token=lead)[1]
+hints = [h for h in (state.get("review_hints") or []) if h["status"] == "OPEN"]
+if hints:
+    code, body = call(
+        "POST",
+        f"/api/review-hints/{hints[0]['hint_id']}/materialize",
+        {
+            "title": "跟一下海报",
+            "deliverable": "海报进度说明",
+            "acceptance_criteria": "有结论",
+            "work_requirements": "海报进度说明",
+            "priority": "P2",
+            "team_required_by_sim_time": "2026-08-25T17:00:00+10:00",
+            "message_id": "fc-materialize",
+        },
+        lead,
+    )
+    step("把召回提示变成任务", code == 200, f"{code} {str(body.get('message'))[:60]}")
+else:
+    step("抽取里带着召回提示", False, "这份抽取没有 review_hints，materialize 走不到")
 
 code, body = call(
     "POST",
@@ -965,8 +995,13 @@ from test_surface_coverage import KNOWN_UNREACHABLE, declared_routes  # noqa: E4
 
 reachable = declared_routes() - KNOWN_UNREACHABLE
 uncovered = sorted(reachable - TOUCHED)
+# Counted against the intersection, not against everything touched. TOUCHED
+# also holds paths that are not declared write routes (session, for one), so
+# the old line could read 33/33 while naming a route it had never reached --
+# a progress number that disagreed with the verdict beside it.
+covered = len(reachable & TOUCHED)
 step(
-    f"这一趟走过 {len(TOUCHED)}/{len(reachable)} 条写路由",
+    f"这一趟走过 {covered}/{len(reachable)} 条写路由",
     not uncovered,
     "" if not uncovered else "没走到：" + "、".join(uncovered),
 )

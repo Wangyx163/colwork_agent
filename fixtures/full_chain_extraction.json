@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "provider": "fixture",
+  "model": "deterministic",
+  "prompt_version": "meeting-action-items.v1.4",
+  "input_sha256": "af587d2bb7b5bc72d05c5ff177d31cc3c5d28517784049787d209e16b1454804",
+  "input_characters": 374,
+  "source": {
+    "filename": "20260309120000-全链路测试会议-逐字稿文本-1.txt"
+  },
+  "action_items": [
+    {
+      "title": "整理本周周报",
+      "deliverable": "周报",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:01:00",
+      "source_quote": "这周的周报要整理出来",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "核对上季度预算表",
+      "deliverable": "预算核对结论",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:02:00",
+      "source_quote": "上个季度的预算表要核一遍",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "收集采访候选问题",
+      "deliverable": "候选问题清单",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:03:00",
+      "source_quote": "采访提纲还没定",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "投票定下最终问题",
+      "deliverable": "最终问题三条",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:04:00",
+      "source_quote": "收集完的问题要投票选出最终的三条",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "更新客户名单",
+      "deliverable": "客户名单",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:05:00",
+      "source_quote": "客户名单该更新了",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "预订场地",
+      "deliverable": "场地确认",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:06:00",
+      "source_quote": "场地要提前订",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    },
+    {
+      "title": "过一遍设备清单",
+      "deliverable": "设备清单",
+      "owner_name": null,
+      "deadline_text": null,
+      "deadline_iso": null,
+      "source_timestamp": "00:07:00",
+      "source_quote": "设备清单要过一遍",
+      "confidence": 0.9,
+      "needs_confirmation": true,
+      "uncertainties": []
+    }
+  ],
+  "review_hints": [
+    {
+      "candidate_id": "hint-poster",
+      "source_timestamp": "00:08:00",
+      "source_quote": "海报那边好像也要人跟一下",
+      "evidence_text": "还有个事我不确定算不算任务，海报那边好像也要人跟一下。"
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "needs_confirmation": 7,
+    "missing_owner": 7,
+    "missing_deadline": 7
+  }
+}

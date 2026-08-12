@@ -11,6 +11,7 @@ import {
 } from "./panels";
 import type { Observatory } from "./types";
 import { apiUrl, authHeaders } from "./api";
+import { pageUrl } from "./base";
 
 export default function ObservatoryPage() {
   const [data, setData] = useState<Observatory | null>(null);
@@ -52,7 +53,7 @@ export default function ObservatoryPage() {
         <p className="mt-3 text-ink-2">{error}</p>
         <p className="mt-3 text-[0.88rem] text-ink-3">
           这个页面只对会议负责人开放。请先在
-          <a className="text-accent underline" href="/tasks">
+          <a className="text-accent underline" href={pageUrl("/tasks")}>
             {" "}
             工作台{" "}
           </a>
@@ -82,7 +83,7 @@ export default function ObservatoryPage() {
           {data.audit.total} 事件
         </span>
         <a
-          href="/manage"
+          href={pageUrl("/manage")}
           className="ml-auto font-mono text-[0.75rem] text-accent underline"
         >
           回到工作台

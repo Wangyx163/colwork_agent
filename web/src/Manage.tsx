@@ -8,6 +8,7 @@ import { StructurePanel } from "./manage/StructurePanel";
 import { CompoundDeclare } from "./manage/CompoundDeclare";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
+import { pageUrl } from "./base";
 
 // PENDING_ASSIGNMENT means dispatched and waiting for the people named on it
 // to accept -- not waiting to be dispatched. Filing it under 派发 put a
@@ -100,7 +101,7 @@ export default function ManagePage() {
         <p className="mt-3 text-ink-2">{error}</p>
         <p className="mt-3 text-[0.88rem] text-ink-3">
           这个页面只对会议负责人开放。请先在
-          <a className="text-accent underline" href="/tasks">
+          <a className="text-accent underline" href={pageUrl("/tasks")}>
             {" "}
             工作台{" "}
           </a>
@@ -133,10 +134,10 @@ export default function ManagePage() {
           {formatDay(state.episode.current_sim_time as string)}
         </span>
         <nav className="ml-auto flex gap-4 font-mono text-[0.75rem]">
-          <a className="text-accent underline" href="/tasks">
+          <a className="text-accent underline" href={pageUrl("/tasks")}>
             我的任务
           </a>
-          <a className="text-accent underline" href="/observatory">
+          <a className="text-accent underline" href={pageUrl("/observatory")}>
             Observatory
           </a>
         </nav>

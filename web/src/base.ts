@@ -42,6 +42,19 @@ export function pagePath(): string {
   return slug ? path.slice(slug.length + 1) || "/" : path;
 }
 
+/** An href to another page of *this* meeting.
+ *
+ *  Every internal link used to be written absolute -- `/tasks`, `/manage` --
+ *  which was correct while one meeting sat at the root and silently wrong the
+ *  moment meetings got a prefix: the link left the meeting entirely and the
+ *  server answered `unknown_meeting`. Links to somewhere outside a meeting
+ *  (the index) and links a person submitted (attachments, references) are not
+ *  this and must not go through it.
+ */
+export function pageUrl(path: string): string {
+  return path.startsWith("/") ? `${basePath()}${path}` : path;
+}
+
 /** Session storage is per meeting for the same reason the server mints tokens
  *  per meeting: an actor id only means anything inside one episode. */
 export function tokenKey(): string {

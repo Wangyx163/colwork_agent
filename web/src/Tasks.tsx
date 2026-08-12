@@ -12,7 +12,7 @@ import { MyTaskCard, type Act } from "./tasks/MyTaskCard";
 import { VotePanel } from "./tasks/VotePanel";
 import { CompoundPanel } from "./tasks/CompoundPanel";
 
-import { tokenKey } from "./base";
+import { pageUrl, tokenKey } from "./base";
 
 const DONE = new Set(["ACCEPTED", "AGGREGATED", "ARCHIVED"]);
 
@@ -128,7 +128,7 @@ export default function TasksPage() {
           {coordinator ? (
             <a
               className="font-mono text-[0.75rem] text-accent underline"
-              href="/manage"
+              href={pageUrl("/manage")}
             >
               会议工作台
             </a>

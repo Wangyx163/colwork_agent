@@ -212,6 +212,23 @@ class MultiMeetingConsoleTests(unittest.TestCase):
 
         self.assertIn(status, (200, 503))
 
+    def test_the_bundle_is_never_cached(self) -> None:
+        """It is served under a fixed name, so a cached copy is the previous
+        build running against the current server -- a page that "stopped
+        working" after a rebuild, with nothing in any log to say why."""
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/console/app.js"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                header = response.headers.get("Cache-Control")
+        except urllib.error.HTTPError as error:
+            header = error.headers.get("Cache-Control")
+
+        self.assertIsNotNone(header)
+        self.assertIn("no-store", header)
+
     def test_a_page_route_under_a_slug_serves_the_app(self) -> None:
         request = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/jiayi01/manage"

@@ -1801,6 +1801,13 @@ def build_console_server(
             else:
                 self.send_response(200)
             self.send_header("Content-Type", content_type)
+            # The bundle is served under a fixed name -- /console/app.js, never
+            # /console/app.<hash>.js -- so a browser that caches it keeps
+            # running the previous build against the current server. With no
+            # cache headers at all the browser picks a heuristic, and the
+            # symptom is a page that "stopped working" after a rebuild with
+            # nothing in any log. Revalidation costs one request on localhost.
+            self.send_header("Cache-Control", "no-store, must-revalidate")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

@@ -1691,7 +1691,7 @@ def build_console_server(
     )
     compound_create_path = re.compile(r"^/api/compound-tasks$")
     compound_path = re.compile(
-        r"^/api/compound-tasks/([^/]+)/(input|owner-stage|revoke)$"
+        r"^/api/compound-tasks/([^/]+)/(input|owner-stage|revoke|skip)$"
     )
 
     class Handler(BaseHTTPRequestHandler):
@@ -2088,7 +2088,18 @@ def build_console_server(
                     # here before the roster was ever consulted.
                     authorization.require_episode(principal)
                     compound_task_id, operation = compound_match.groups()
-                    if operation == "input":
+                    if operation == "skip":
+                        result = compound_store.skip_member(
+                            service.db,
+                            compound_task_id,
+                            run_id=service.run_id,
+                            actor_id=principal.actor_id,
+                            target_actor_id=payload.get("target_actor_id", ""),
+                            reason=payload.get("reason", ""),
+                            sim_time=service.now(),
+                            message_id=self._message_id(payload),
+                        )
+                    elif operation == "input":
                         result = compound_store.submit_input(
                             service.db,
                             compound_task_id,

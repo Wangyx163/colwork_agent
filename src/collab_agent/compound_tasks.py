@@ -138,15 +138,27 @@ def may_act(stage: str, *, actor_id: str, owner_actor_id: str, members: list[str
 
 
 def is_complete(
-    stage: str, *, submitted_actor_ids: set[str], members: list[str]
+    stage: str,
+    *,
+    submitted_actor_ids: set[str],
+    members: list[str],
+    skipped_actor_ids: set[str] | None = None,
 ) -> bool:
     """Whether an EVERYONE stage can move on.
 
-    Everybody, not a quorum. A shortlist assembled from four of five people's
-    questions is missing one person's, and nothing downstream can tell that it
-    is missing -- so the wait is the feature.
+    Everybody, not a quorum: a shortlist assembled from four of five people's
+    questions is missing one, and nothing downstream can tell that it is
+    missing. The wait is the feature.
+
+    Which is also why the only way past it is an explicit act by the owner,
+    named here as a skip. Waiting forever is not a policy -- somebody is on
+    leave, somebody left the team -- but the difference between "everyone
+    answered" and "four answered and one was passed over" has to survive into
+    the record, or the shortlist quietly becomes untraceable again. A skip is
+    therefore a decision with an author and a reason, not a timeout.
     """
 
     if role_at(stage) != "EVERYONE":
         return False
-    return set(members).issubset(submitted_actor_ids)
+    settled = set(submitted_actor_ids) | set(skipped_actor_ids or ())
+    return set(members).issubset(settled)

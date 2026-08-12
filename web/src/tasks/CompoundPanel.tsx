@@ -18,6 +18,16 @@ export type CompoundTask = {
   my_turn: boolean;
   my_input: { options?: string[]; content?: string; scores?: Record<string, number> } | null;
   options: string[];
+  /** Who was passed over at which stage, and why. Carried so the panel can
+   *  say it rather than silently showing a smaller roster. */
+  skipped: {
+    actor_id: string;
+    stage: string;
+    reason: string;
+    skipped_by_actor_id: string;
+  }[];
+  /** Display names for the roster, so a skip control can name a person. */
+  member_names?: Record<string, string>;
   collected: { actor_id: string; payload: { options?: string[]; content?: string } }[];
   result: {
     voted_count: number;
@@ -150,7 +160,21 @@ export function CompoundPanel({
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [skipTarget, setSkipTarget] = useState("");
+  const [skipReason, setSkipReason] = useState("");
   const owner = me === task.owner_actor_id;
+  const stageSkips = (task.skipped ?? []).filter(
+    (skip) => skip.stage === task.stage,
+  );
+  // Who the stage is still waiting on: on the roster, has not answered, has
+  // not already been passed over.
+  const answered = new Set(task.collected.map((entry) => entry.actor_id));
+  const waiting = task.member_actor_ids.filter(
+    (actorId) =>
+      actorId !== task.owner_actor_id &&
+      !answered.has(actorId) &&
+      !stageSkips.some((skip) => skip.actor_id === actorId),
+  );
 
   /** Each operation spells its own URL out.
    *
@@ -230,6 +254,69 @@ export function CompoundPanel({
               ? " · 要等所有人交齐才进下一环节"
               : ""}
           </p>
+        ) : null}
+
+        {stageSkips.length ? (
+          <div className="rounded border border-rule-2 bg-sunk px-3 py-2 text-[0.78rem] text-ink-2">
+            {stageSkips.map((skip) => (
+              <p key={skip.actor_id}>
+                跳过了 <b>{task.member_names?.[skip.actor_id] ?? skip.actor_id}</b>
+                ：{skip.reason}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
+        {owner && task.stage_role === "EVERYONE" && waiting.length ? (
+          <div className="rounded border border-dashed border-rule-2 px-3 py-2.5">
+            <p className="text-[0.79rem] text-ink-2">
+              还差 {waiting.length} 个人没交。等是默认的——一份少了一个人的清单，
+              后面没人看得出来少了谁。确实等不到的话可以跳过，会记下是你跳的和原因。
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <select
+                value={skipTarget}
+                onChange={(event) => setSkipTarget(event.target.value)}
+                className="rounded border border-rule bg-raise px-2 py-1 text-[0.8rem]"
+              >
+                <option value="">选一个人</option>
+                {waiting.map((actorId) => (
+                  <option key={actorId} value={actorId}>
+                    {task.member_names?.[actorId] ?? actorId}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={skipReason}
+                onChange={(event) => setSkipReason(event.target.value)}
+                placeholder="为什么不等了"
+                className="min-w-[12rem] flex-1 rounded border border-rule bg-raise px-2 py-1 text-[0.8rem]"
+              />
+              <button
+                disabled={!skipTarget || !skipReason.trim() || busy}
+                onClick={() => {
+                  setBusy(true);
+                  void postJson(
+                    `/api/compound-tasks/${task.compound_task_id}/skip`,
+                    {
+                      target_actor_id: skipTarget,
+                      reason: skipReason,
+                      message_id: messageId("compound-skip"),
+                    },
+                  )
+                    .then(() => {
+                      setSkipTarget("");
+                      setSkipReason("");
+                      reload();
+                    })
+                    .finally(() => setBusy(false));
+                }}
+                className="rounded border border-rule px-2.5 py-1 text-[0.8rem] hover:bg-ground disabled:opacity-40"
+              >
+                跳过并继续
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {!task.my_turn ? (

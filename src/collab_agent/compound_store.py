@@ -25,7 +25,7 @@ from .compound_tasks import (
     role_at,
     stages_for,
 )
-from .models import canonical_json
+from .models import canonical_json, stable_hash
 
 
 def _decode(value: Any, fallback: Any) -> Any:
@@ -262,6 +262,14 @@ def submit_input(
             payload={"stage": stage, "actor_id": actor_id, "replaced": bool(prior)},
             correlation_id=f"corr_{message_id}",
         )
+        # Delivering late undoes being skipped: somebody who answers has
+        # answered, and leaving the skip standing would keep a record saying
+        # they did not.
+        cursor.execute(
+            "DELETE FROM compound_task_skips WHERE compound_task_id = ? "
+            "AND stage = ? AND actor_id = ?",
+            (compound_task_id, stage, actor_id),
+        )
         answered = {
             dict(row)["actor_id"]
             for row in cursor.execute(
@@ -270,8 +278,12 @@ def submit_input(
                 (compound_task_id, stage),
             ).fetchall()
         }
+        skipped = _skipped_at(cursor, compound_task_id, stage)
         complete = is_complete(
-            stage, submitted_actor_ids=answered, members=task["member_actor_ids"]
+            stage,
+            submitted_actor_ids=answered,
+            members=task["member_actor_ids"],
+            skipped_actor_ids=skipped,
         )
         if complete:
             _enter(
@@ -281,13 +293,146 @@ def submit_input(
                 next_stage(task["kind"], stage),
                 run_id=run_id,
                 sim_time=sim_time,
-                reason="everyone answered",
+                reason=(
+                    "everyone answered"
+                    if not skipped
+                    else f"answered, with {len(skipped)} skipped"
+                ),
             )
         result = {
             "compound_task_id": compound_task_id,
             "input_id": input_id,
             "stage": stage,
             "answered": sorted(answered),
+            "stage_complete": complete,
+        }
+        _record_inbound(db, cursor, message_id, result, sim_time)
+    return result
+
+
+def _skipped_at(cursor: Any, compound_task_id: str, stage: str) -> set[str]:
+    return {
+        dict(row)["actor_id"]
+        for row in cursor.execute(
+            "SELECT actor_id FROM compound_task_skips "
+            "WHERE compound_task_id = ? AND stage = ?",
+            (compound_task_id, stage),
+        ).fetchall()
+    }
+
+
+def skip_member(
+    db: Any,
+    compound_task_id: str,
+    *,
+    run_id: str,
+    actor_id: str,
+    target_actor_id: str,
+    reason: str,
+    sim_time: str,
+    message_id: str,
+) -> dict[str, Any]:
+    """Move the stage on without one person's answer, on the owner's say-so.
+
+    A skip is a decision, not a timeout. Waiting for everybody is the rule that
+    keeps a shortlist traceable -- four of five people's questions is missing
+    one, and nothing downstream can tell -- so the only way past it names an
+    author and a reason, and both go into the trail. An automatic expiry would
+    move the stage on with nobody accountable for the gap.
+
+    Only the owner. The coordinator's authority over a compound task is spent
+    when they declare it; who is missing from a round is a judgement by the
+    person assembling that round.
+
+    A skip is undone by the person answering: their input clears it, because
+    somebody who delivers late has delivered.
+    """
+
+    existing = db.one(
+        "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+        (message_id,),
+    )
+    if existing:
+        return json.loads(existing["processed_result"])
+
+    task = load(db, compound_task_id)
+    stage = task["stage"]
+    reason = (reason or "").strip()
+    if task["owner_actor_id"] != actor_id:
+        raise PermissionError("only the compound task owner may skip somebody")
+    if role_at(stage) != "EVERYONE":
+        raise ValueError("this stage is not waiting on anybody")
+    if target_actor_id not in task["member_actor_ids"]:
+        raise ValueError("that person is not on this compound task")
+    if target_actor_id == actor_id:
+        raise ValueError("the owner cannot skip themselves")
+    if not reason:
+        raise ValueError("a skip needs a reason")
+
+    with db.transaction() as cursor:
+        answered = {
+            dict(row)["actor_id"]
+            for row in cursor.execute(
+                "SELECT actor_id FROM compound_task_inputs "
+                "WHERE compound_task_id = ? AND stage = ?",
+                (compound_task_id, stage),
+            ).fetchall()
+        }
+        if target_actor_id in answered:
+            raise ValueError("that person already answered")
+        skip_id = f"skip_{stable_hash([compound_task_id, stage, target_actor_id])[:16]}"
+        cursor.execute(
+            "INSERT INTO compound_task_skips("
+            "skip_id, compound_task_id, stage, actor_id, skipped_by_actor_id, "
+            "reason, source_message_id, created_sim_time"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                skip_id,
+                compound_task_id,
+                stage,
+                target_actor_id,
+                actor_id,
+                reason,
+                message_id,
+                sim_time,
+            ),
+        )
+        db.append_audit(
+            cursor,
+            run_id=run_id,
+            aggregate_type="CompoundTask",
+            aggregate_id=compound_task_id,
+            event_type="CompoundTaskMemberSkipped",
+            sim_time=sim_time,
+            payload={
+                "stage": stage,
+                "actor_id": target_actor_id,
+                "skipped_by": actor_id,
+                "reason": reason,
+            },
+            correlation_id=f"corr_{message_id}",
+        )
+        skipped = _skipped_at(cursor, compound_task_id, stage)
+        complete = is_complete(
+            stage,
+            submitted_actor_ids=answered,
+            members=task["member_actor_ids"],
+            skipped_actor_ids=skipped,
+        )
+        if complete:
+            _enter(
+                db,
+                cursor,
+                task,
+                next_stage(task["kind"], stage),
+                run_id=run_id,
+                sim_time=sim_time,
+                reason=f"answered, with {len(skipped)} skipped",
+            )
+        result = {
+            "compound_task_id": compound_task_id,
+            "stage": stage,
+            "skipped_actor_id": target_actor_id,
             "stage_complete": complete,
         }
         _record_inbound(db, cursor, message_id, result, sim_time)
@@ -573,6 +718,24 @@ def project(db: Any, episode_id: str, *, actor_id: str) -> list[dict[str, Any]]:
         task = dict(row)
         task["member_actor_ids"] = _decode(task["member_actor_ids"], [])
         stage = task["stage"]
+        # Names, so a skip control can offer people rather than actor ids.
+        task["member_names"] = {
+            dict(row)["actor_id"]: dict(row)["display_name"]
+            for row in db.all(
+                "SELECT actor_id, display_name FROM actors WHERE actor_id IN ("
+                + ",".join("?" for _ in task["member_actor_ids"])
+                + ")",
+                tuple(task["member_actor_ids"]),
+            )
+        } if task["member_actor_ids"] else {}
+        task["skipped"] = [
+            dict(row)
+            for row in db.all(
+                "SELECT actor_id, stage, reason, skipped_by_actor_id "
+                "FROM compound_task_skips WHERE compound_task_id = ?",
+                (task["compound_task_id"],),
+            )
+        ]
         inputs = [
             dict(item)
             for item in db.all(

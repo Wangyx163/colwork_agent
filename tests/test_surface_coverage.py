@@ -36,12 +36,38 @@ def declared_routes() -> set[str]:
     return routes
 
 
+def reachable_modules() -> set[Path]:
+    """Source files the app can actually reach, from the entry point outwards.
+
+    A component nothing imports is not part of the product, however present it
+    is in the tree. Without this the check reads a route as wired because some
+    unrendered file still calls it -- which is the opposite of what it exists
+    to detect.
+    """
+
+    by_stem = {path.stem: path for path in WEB_SRC.rglob("*.ts*")}
+    reached: set[Path] = set()
+    frontier = [by_stem[name] for name in ("main", "App") if name in by_stem]
+    while frontier:
+        current = frontier.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        text = current.read_text(encoding="utf-8")
+        for target in re.findall(r"""from\s+["'](\.[^"']+)["']""", text):
+            stem = target.rsplit("/", 1)[-1]
+            if stem in by_stem and by_stem[stem] not in reached:
+                frontier.append(by_stem[stem])
+    return reached
+
+
 def wired_calls() -> set[str]:
     """Every /api/... path the built pages actually call."""
 
     called: set[str] = set()
+    reachable = reachable_modules()
     for path in WEB_SRC.rglob("*.ts*"):
-        if path.name.endswith(".test.ts"):
+        if path.name.endswith(".test.ts") or path not in reachable:
             continue
         for raw in re.findall(r"[\"`](/api/[^\"`\s?]+)", path.read_text(encoding="utf-8")):
             # Template holes become the same placeholder the routes use.
@@ -60,6 +86,14 @@ KNOWN_UNREACHABLE = {
     # replaces; replacing a draft is reachable from the Memory panel as
     # confirm/withdraw, and a third verb would only duplicate them.
     "/api/memories/{id}/replace",
+    # The question-vote structure says the same thing a compound task says --
+    # collect, merge, vote, finalise -- out of ordinary tasks plus a relation
+    # table. Two ways to declare one idea is what put two panels at the same
+    # position on the coordinator's page. The compound task is the one kept;
+    # these stay reachable in code and unrendered, because removing them for
+    # good is a decision that has not been made.
+    "/api/collaboration-structures/question-vote",
+    "/api/collaboration-structures/question-vote/{id}/revoke",
 }
 
 

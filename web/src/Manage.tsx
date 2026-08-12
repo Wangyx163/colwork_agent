@@ -4,7 +4,6 @@ import type { ManageState, ReviewHint, Task } from "./manage-types";
 import { buildStrip, formatDay } from "./manage/schedule";
 import { ScheduleStrip } from "./manage/ScheduleStrip";
 import { FinalReport } from "./manage/FinalReport";
-import { StructurePanel } from "./manage/StructurePanel";
 import { CompoundDeclare } from "./manage/CompoundDeclare";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
@@ -237,7 +236,12 @@ export default function ManagePage() {
 
       <CompoundDeclare state={state} act={act} />
 
-      <StructurePanel state={state} act={act} />
+      {/* StructurePanel is deliberately not rendered. It declares the same
+          idea as the compound task -- collect, merge, vote, finalise -- out
+          of ordinary tasks plus a relation table, and two ways to say one
+          thing is what put two panels at the same position. The compound
+          task is the one kept; the other stays in the tree, unrendered,
+          because the decision to remove it for good has not been made. */}
 
       {/* 03 --------------------------------------------------------------- */}
       <Zone

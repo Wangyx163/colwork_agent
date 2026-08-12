@@ -841,6 +841,69 @@ code, second = call(
     lead,
 )
 step("提交型复合任务可建", code == 200, str(code))
+
+# Skip is exercised here rather than on the vote task above, where settling a
+# member early completes the stage before the loop expects it to and every
+# later assertion reads as broken.
+second_id = (second or {}).get("compound_task_id", "")
+if second_id:
+    skipped_name = next(name for name in everyone if actors[name] != cmp_owner)
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{second_id}/skip",
+        {
+            "target_actor_id": actors[skipped_name],
+            "reason": "",
+            "message_id": "cmp_skip_noreason",
+        },
+        tokens[cmp_owner_name],
+    )
+    step("不写原因的跳过被拒", code >= 400, str(code))
+
+    code, _ = call(
+        "POST",
+        f"/api/compound-tasks/{second_id}/skip",
+        {
+            "target_actor_id": actors[skipped_name],
+            "reason": "出差到下周",
+            "message_id": "cmp_skip_wrong_person",
+        },
+        tokens[skipped_name],
+    )
+    step("非负责人跳过别人被拒", code >= 400, str(code))
+
+    code, body = call(
+        "POST",
+        f"/api/compound-tasks/{second_id}/skip",
+        {
+            "target_actor_id": actors[skipped_name],
+            "reason": "出差到下周",
+            "message_id": "cmp_skip_ok",
+        },
+        tokens[cmp_owner_name],
+    )
+    step(
+        f"负责人跳过 {skipped_name}",
+        code == 200,
+        f"{code} {str(body.get('message'))[:50]}",
+    )
+
+    remaining = [n for n in everyone if n != skipped_name]
+    for index, name in enumerate(remaining):
+        code, body = call(
+            "POST",
+            f"/api/compound-tasks/{second_id}/input",
+            {
+                "payload": {"content": f"{name} 的材料"},
+                "message_id": f"cmp_skip_fill_{index}",
+            },
+            tokens[name],
+        )
+    step(
+        "被跳过的人不再拦着环节推进",
+        code == 200 and bool(body.get("stage_complete")),
+        f"{code} {body.get('stage_complete')}",
+    )
 submit_id = second.get("compound_task_id", "")
 if submit_id:
     code, _ = call(

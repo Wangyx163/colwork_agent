@@ -405,6 +405,18 @@ CREATE TABLE IF NOT EXISTS compound_task_inputs (
     created_sim_time TEXT NOT NULL,
     UNIQUE (compound_task_id, stage, actor_id)
 );
+
+CREATE TABLE IF NOT EXISTS compound_task_skips (
+    skip_id TEXT PRIMARY KEY,
+    compound_task_id TEXT NOT NULL REFERENCES compound_tasks(compound_task_id),
+    stage TEXT NOT NULL,
+    actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    skipped_by_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    reason TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    created_sim_time TEXT NOT NULL,
+    UNIQUE (compound_task_id, stage, actor_id)
+);
 """
 
 

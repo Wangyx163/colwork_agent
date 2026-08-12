@@ -138,6 +138,24 @@ USER_MESSAGES: dict[str, str] = {
     'unsupported memory action': (
         '不支持的记忆操作'
     ),
+    'only the compound task owner may skip somebody': (
+        '只有复合任务的负责人可以跳过某个人'
+    ),
+    'this stage is not waiting on anybody': (
+        '这个环节没有在等谁'
+    ),
+    'that person is not on this compound task': (
+        '这个人不在这个复合任务里'
+    ),
+    'the owner cannot skip themselves': (
+        '负责人不能跳过自己'
+    ),
+    'a skip needs a reason': (
+        '跳过要写原因'
+    ),
+    'that person already answered': (
+        '这个人已经交了'
+    ),
     'message_id is required': (
         'message_id 为必填项'
     ),

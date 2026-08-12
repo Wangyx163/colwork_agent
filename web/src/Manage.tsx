@@ -116,6 +116,7 @@ export default function ManagePage() {
 
   const inFlight = tasks.filter((task) => IN_FLIGHT.has(task.status));
   const awaiting = tasks.filter((task) => AWAITING_DISPATCH.has(task.status));
+  const [manualOpen, setManualOpen] = useState(false);
   const openHints = state.review_hints.filter((hint) => hint.status === "OPEN");
   const toReview = tasks.filter((task) => task.status === "PENDING_ACCEPTANCE");
   const reviewed = tasks.filter((task) => DONE.has(task.status));
@@ -195,10 +196,17 @@ export default function ManagePage() {
         pending={awaiting.length + openHints.length}
         pendingLabel={`${awaiting.length} 项待派发 · ${openHints.length} 条召回提示`}
         ownerOnly
+        action={
+          <Button onClick={() => setManualOpen((open) => !open)}>
+            {manualOpen ? "收起" : "补录任务"}
+          </Button>
+        }
       >
-        <div className="mb-3">
-          <ManualAdd act={act} />
-        </div>
+        {manualOpen ? (
+          <div className="mb-3">
+            <ManualAdd act={act} onDone={() => setManualOpen(false)} />
+          </div>
+        ) : null}
         {openHints.length ? (
           <div className="mb-3 grid gap-2">
             {openHints.map((hint) => (
@@ -434,8 +442,7 @@ function ReviewHintRow({
  *  the dashed treatment the recall hints use, because both are "not yet a task
  *  the meeting produced".
  */
-function ManualAdd({ act }: { act: Act }) {
-  const [open, setOpen] = useState(false);
+function ManualAdd({ act, onDone }: { act: Act; onDone: () => void }) {
   const [title, setTitle] = useState("");
   const [deliverable, setDeliverable] = useState("");
   const [note, setNote] = useState("");
@@ -454,95 +461,77 @@ function ManualAdd({ act }: { act: Act }) {
         team_required_by_sim_time: when ? `${when}T17:00:00+10:00` : null,
         message_id: messageId("add-action-item"),
       });
-      setOpen(false);
-      setTitle("");
-      setDeliverable("");
-      setNote("");
-      setAcceptance("");
-      setWhen("");
+      onDone();
     }, "已加入待派发；它会标注为人工补录");
 
   return (
-    <article className="rounded-md border border-dashed border-rule-2 px-3.5 py-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <b className="text-[0.9rem]">手动补一条任务</b>
-          <Chip>抽取没抽到的</Chip>
-        </div>
-        <Button onClick={() => setOpen((value) => !value)}>
-          {open ? "收起" : "补录任务"}
+    <div className="grid gap-2 rounded border border-rule-2 bg-ground p-3">
+      <label className="grid gap-1 text-[0.79rem]">
+        任务名称
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        交付说明
+        <textarea
+          rows={3}
+          value={deliverable}
+          onChange={(event) => setDeliverable(event.target.value)}
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        会上从哪儿来的（必填）
+        <input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="例：散会前口头补的，逐字稿里没有"
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        验收标准（可稍后补）
+        <input
+          value={acceptance}
+          onChange={(event) => setAcceptance(event.target.value)}
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="grid gap-1 text-[0.79rem]">
+          优先级
+          <select
+            value={priority}
+            onChange={(event) => setPriority(event.target.value)}
+            className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+          >
+            <option value="P0">P0</option>
+            <option value="P1">P1</option>
+            <option value="P2">P2</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-[0.79rem]">
+          团队期望日期（可稍后补）
+          <input
+            type="date"
+            value={when}
+            onChange={(event) => setWhen(event.target.value)}
+            className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+          />
+        </label>
+      </div>
+      <div>
+        <Button
+          disabled={!title.trim() || !deliverable.trim() || !note.trim()}
+          onClick={submit}
+        >
+          确认补录
         </Button>
       </div>
-      {open ? (
-        <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
-          <label className="grid gap-1 text-[0.79rem]">
-            任务名称
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-            />
-          </label>
-          <label className="grid gap-1 text-[0.79rem]">
-            交付说明
-            <textarea
-              rows={3}
-              value={deliverable}
-              onChange={(event) => setDeliverable(event.target.value)}
-              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-            />
-          </label>
-          <label className="grid gap-1 text-[0.79rem]">
-            会上从哪儿来的（必填）
-            <input
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="例：散会前口头补的，逐字稿里没有"
-              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-            />
-          </label>
-          <label className="grid gap-1 text-[0.79rem]">
-            验收标准（可稍后补）
-            <input
-              value={acceptance}
-              onChange={(event) => setAcceptance(event.target.value)}
-              className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="grid gap-1 text-[0.79rem]">
-              优先级
-              <select
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-              >
-                <option value="P0">P0</option>
-                <option value="P1">P1</option>
-                <option value="P2">P2</option>
-              </select>
-            </label>
-            <label className="grid gap-1 text-[0.79rem]">
-              团队期望日期（可稍后补）
-              <input
-                type="date"
-                value={when}
-                onChange={(event) => setWhen(event.target.value)}
-                className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
-              />
-            </label>
-          </div>
-          <div>
-            <Button
-              disabled={!title.trim() || !deliverable.trim() || !note.trim()}
-              onClick={submit}
-            >
-              确认补录
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </article>
+    </div>
   );
 }
 
@@ -999,6 +988,8 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
   );
   const final = state.final;
   const released = final?.status === "RELEASED";
+  // Computed by the server on every read and, until now, rendered nowhere.
+  const review = final?.release_review;
 
   return (
     <Zone
@@ -1016,6 +1007,19 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
               : "可以生成"
       }
     >
+      {review && review.status === "REJECTED" ? (
+        <div className="mb-3 rounded-md border border-warn bg-warn-wash px-3.5 py-3">
+          <b className="text-[0.86rem]">这份终稿被否了</b>
+          <p className="mt-1 text-[0.83rem] leading-relaxed text-ink-2">
+            {review.comment || "没有留下说明。"}
+          </p>
+          <p className="mt-2 text-[0.78rem] leading-relaxed text-ink-3">
+            终稿是从已验收的成果汇总出来的，所以改法是把对应任务重做一版：
+            退回给负责人、重新提交、重新验收，这份终稿会自动作废，然后就能再生成一份。
+            在那之前它会一直停在这里——这不是卡住，是在等新的成果。
+          </p>
+        </div>
+      ) : null}
       <div className="overflow-hidden rounded-md border border-rule-2">
         <h3 className="border-b border-rule-2 bg-sunk px-3 py-2 text-[0.82rem] font-semibold">
           {released ? "已放行的终稿" : "将汇总（预览）"}

@@ -514,6 +514,18 @@ def _task_activity(
     )
 
 
+def _episode_title(service: CoordinationService) -> str | None:
+    """What this meeting is called, or None when nothing registered it."""
+
+    from . import episode_registry  # noqa: PLC0415 - avoid an import cycle
+
+    try:
+        source = episode_registry.source_for(service.db, service.episode_id)
+    except Exception:  # noqa: BLE001 - a title is never worth failing a page
+        return None
+    return (source.title or None) if source else None
+
+
 def workbench_state(
     service: CoordinationService,
     *,
@@ -1105,7 +1117,12 @@ def workbench_state(
         review_hints.append(hint)
 
     state = {
-        "episode": dict(episode),
+        # Named, not identified. `episodes` has no title column, so this fell
+        # back to the episode id and the header of a page a person reads all
+        # day said `episode_meeting_62c2c22430bf63a905b7`. The registry knows
+        # what the meeting was called, because that is what it was registered
+        # under.
+        "episode": {**dict(episode), "title": _episode_title(service)},
         # Vocabularies the pages must offer verbatim.
         #
         # A return reason recorded on one surface is read back on the other, so

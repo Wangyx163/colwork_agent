@@ -63,7 +63,13 @@ export function Handbook({
 }) {
   const mine = memories.filter((memory) => memory.actor_id === me);
   const drafts = mine.filter((memory) => memory.status === "PRIVATE_DRAFT");
-  const confirmed = mine.filter((memory) => memory.status !== "PRIVATE_DRAFT");
+  // CONFIRMED, not "anything that is not a draft". The looser test also swept
+  // in SUPERSEDED and REJECTED rows -- eight of them against five real ones on
+  // the live meeting -- so the list showed entries colleagues cannot see, each
+  // with a 撤下 button the domain refuses because only a confirmed memory may
+  // be withdrawn. That is the "cannot take it down" report: the button worked,
+  // it was attached to rows that were already down.
+  const confirmed = mine.filter((memory) => memory.status === "CONFIRMED");
 
   return (
     <Zone

@@ -261,7 +261,15 @@ export interface FinalDeliverable {
     } | null;
     [key: string]: unknown;
   } | null;
-  release_review?: Record<string, unknown> | null;
+  /** The decision on releasing this final, or null while none has been made.
+   *  Typed rather than left loose because the page reads two of its fields and
+   *  an `unknown` there is a compile error waiting for whoever renders it. */
+  release_review?: {
+    approval_id: string;
+    status: string;
+    comment: string;
+    decided_sim_time: string | null;
+  } | null;
 }
 
 export interface OrganizedReport {

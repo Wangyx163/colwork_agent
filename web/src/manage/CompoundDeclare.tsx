@@ -66,8 +66,9 @@ export function CompoundDeclare({
 
   return (
     <Zone
-      n="02b"
-      name="复合任务"
+      n=""
+      tool
+      name="建一个复合任务"
       anchor="zone-compound"
       pending={declared.filter((task) => task.stage !== "DONE").length}
       pendingLabel={`${declared.length} 项已建`}

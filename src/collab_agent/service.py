@@ -50,11 +50,23 @@ NOTIFY_REVIEW_DECIDED = "REVIEW_DECIDED"
 NOTIFY_ASSISTANCE_REQUESTED = "ASSISTANCE_REQUESTED"
 NOTIFY_RESULT_PENDING_REVIEW = "RESULT_PENDING_REVIEW"
 NOTIFY_TASK_AMENDED = "TASK_AMENDED"
+NOTIFY_TASK_REVISED = "TASK_REVISED"
 NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
 NOTIFY_COMPOUND_TURN = "COMPOUND_TURN"
 #: The two things a task owner may change about their own task, in the words
 #: a reader uses for them rather than the column names.
 AMENDABLE_FIELD_NAMES = {"title": "任务名称", "deliverable": "任务说明"}
+#: What a coordinator can change while a task is still a draft, again in
+#: reader's words. Not every stored field is here: a change to something
+#: nobody outside the console has seen is not worth a notification.
+REVISABLE_FIELD_NAMES = {
+    "title": "任务名称",
+    "deliverable": "任务说明",
+    "acceptance_criteria": "验收标准",
+    "work_requirements": "工作要求",
+    "team_required_by_sim_time": "团队要求交付时间",
+    "priority": "优先级",
+}
 NOTIFICATION_EFFECT_TYPES = frozenset(
     {
         NOTIFY_ASSIGNMENT_RESPONSE_REQUIRED,
@@ -63,6 +75,7 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_ASSISTANCE_REQUESTED,
         NOTIFY_RESULT_PENDING_REVIEW,
         NOTIFY_TASK_AMENDED,
+        NOTIFY_TASK_REVISED,
         NOTIFY_ASSISTANCE_RESOLVED,
         NOTIFY_COMPOUND_TURN,
     }
@@ -2318,6 +2331,56 @@ class CoordinationService:
                 },
                 correlation_id=f"corr_{message_id}",
             )
+            # Whoever was on the last dispatch, if there was one. Somebody
+            # returned this task asking for a change; until now nothing told
+            # them whether it happened -- the return superseded every
+            # assignment, the coordinator rewrote the task, and the only
+            # record of both was an audit trail they cannot read. They found
+            # out when a new dispatch card arrived, if one ever did, and a
+            # rewrite was indistinguishable from a silent drop.
+            #
+            # A draft nobody has ever been dispatched has no such audience, so
+            # routine editing of a fresh candidate stays silent.
+            previously_on_it = [
+                row["actor_id"]
+                for row in cursor.execute(
+                    "SELECT DISTINCT actor_id FROM action_item_assignments "
+                    "WHERE action_item_id = ? AND response_status IN "
+                    "('RETURNED', 'SUPERSEDED')",
+                    (action_item_id,),
+                ).fetchall()
+            ]
+            editor = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+            # Opening the form and saving it unchanged is not news. Guarded
+            # here rather than by the EffectId, which is derived per message
+            # and so would let a second no-op save send a second card.
+            if not changed_fields:
+                previously_on_it = []
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_TASK_REVISED,
+                recipient_actor_ids=[
+                    actor for actor in previously_on_it if actor != actor_id
+                ],
+                action_item_id=action_item_id,
+                title=f'{editor["display_name"]} 改了你退回的任务',
+                summary=title,
+                fields=[
+                    {
+                        "label": REVISABLE_FIELD_NAMES.get(field, field),
+                        "value": str(change["after"] or "（清空）"),
+                        "was": str(change["before"] or "（原本为空）"),
+                    }
+                    for field, change in changed_fields.items()
+                    if field in REVISABLE_FIELD_NAMES
+                ],
+                correlation_id=f"corr_{message_id}",
+                sim_time=sim_time,
+                trigger_key=f"revised:{action_item_id}:{len(changed_fields)}:{message_id}",
+                deep_link_path="/tasks",
+            )
             result = {
                 "action_item_id": action_item_id,
                 "title": title,
@@ -2445,8 +2508,25 @@ class CoordinationService:
 
             # Everyone else attached to the task, coordinator included: they
             # are working against a description that just changed under them.
+            #
+            # Read from the assignments rather than from the collaborator list
+            # kept in the proposal metadata. That list is a copy written at
+            # dispatch; the assignments are the record of who is actually on
+            # the task, and a copy is a thing that can be stale while looking
+            # exactly like the truth. PENDING counts as much as ACCEPTED --
+            # somebody still deciding whether to accept is deciding against a
+            # description that just changed, which is the case where knowing
+            # matters most.
             audience = [
-                *metadata.get("collaborator_actor_ids", []),
+                *(
+                    row["actor_id"]
+                    for row in cursor.execute(
+                        "SELECT actor_id FROM action_item_assignments "
+                        "WHERE action_item_id = ? AND definition_version = ? "
+                        "AND response_status IN ('PENDING', 'ACCEPTED')",
+                        (action_item_id, int(action["definition_version"] or 1)),
+                    ).fetchall()
+                ),
                 *(
                     row["actor_id"]
                     for row in cursor.execute(

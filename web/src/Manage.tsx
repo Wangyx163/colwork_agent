@@ -24,6 +24,11 @@ export default function ManagePage() {
   const [flash, setFlash] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [reviewHistory, setReviewHistory] = useState(false);
+  // Up here with the other hooks, not beside the code that uses it. The two
+  // early returns below mean a hook declared after them runs on some renders
+  // and not others, which is React error #310 -- and the page it breaks is the
+  // one that was working a moment earlier, so nothing points at the cause.
+  const [manualOpen, setManualOpen] = useState(false);
   const cards = useRef(new Map<string, HTMLElement>());
 
   const load = useCallback(async () => {
@@ -115,7 +120,6 @@ export default function ManagePage() {
 
   const inFlight = tasks.filter((task) => IN_FLIGHT.has(task.status));
   const awaiting = tasks.filter((task) => AWAITING_DISPATCH.has(task.status));
-  const [manualOpen, setManualOpen] = useState(false);
   const openHints = state.review_hints.filter((hint) => hint.status === "OPEN");
   const toReview = tasks.filter((task) => task.status === "PENDING_ACCEPTANCE");
   const reviewed = tasks.filter((task) => DONE.has(task.status));

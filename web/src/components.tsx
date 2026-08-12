@@ -124,18 +124,26 @@ export function Guard({
   value,
   hit = false,
 }: {
+  /** null means nothing measures this yet. Shown as a dash rather than as a
+   *  zero, because a zero here reads as "checked, and clean" -- which is the
+   *  one claim an unwired check must not make. */
   label: string;
-  value: string;
+  value: string | null;
   hit?: boolean;
 }) {
+  const unmeasured = value === null;
   return (
     <div className="flex items-center gap-2.5 rounded border border-rule-2 px-3 py-2.5">
       <span
         className={`grid size-[1.15rem] shrink-0 place-items-center rounded-full text-[0.72rem] font-bold ${
-          hit ? "bg-warn-wash text-warn" : "bg-ok-wash text-ok"
+          unmeasured
+            ? "bg-sunk text-ink-3"
+            : hit
+              ? "bg-warn-wash text-warn"
+              : "bg-ok-wash text-ok"
         }`}
       >
-        {hit ? value : "✓"}
+        {unmeasured ? "—" : hit ? value : "✓"}
       </span>
       <span className="leading-tight">
         <span className="block text-[0.79rem]">{label}</span>

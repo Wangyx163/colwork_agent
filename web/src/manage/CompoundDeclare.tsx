@@ -72,7 +72,6 @@ export function CompoundDeclare({
       pending={declared.filter((task) => task.stage !== "DONE").length}
       pendingLabel={`${declared.length} 项已建`}
       ownerOnly
-      why="会上定下要「各自出一份 → 一个人汇总 → 大家投票 → 那个人定稿」的事，在这里建。它不是几个任务串起来，而是一套自己的环节：每一环节都要所有人交齐才往下走。"
     >
       {declared.length ? (
         <ul className="mb-3 grid gap-1.5">

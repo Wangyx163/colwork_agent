@@ -52,6 +52,15 @@ export type Observatory = {
   };
   outbox: Record<string, number>;
   results: Record<string, number>;
+  constitution_guards?: {
+    authorization_rejected: number | null;
+    authentication_rejected: number | null;
+    missing_manifest: number | null;
+    field_violations: number | null;
+    principal_violations: number | null;
+    binary_leaks: number | null;
+    input_hash_mismatches: number | null;
+  };
   human_gates: Record<string, number | null>;
   citations: Record<string, unknown>;
   audit: { total: number; first: number; last: number; lanes: AuditLane[] };

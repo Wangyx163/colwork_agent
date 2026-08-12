@@ -9,6 +9,7 @@ import { CompoundDeclare } from "./manage/CompoundDeclare";
 import { Blank, Zone } from "./manage/Zone";
 import { Button, Chip, TaskCard, type CardAction } from "./manage/TaskCard";
 import { pageUrl } from "./base";
+import { Bell } from "./tasks/Bell";
 
 // PENDING_ASSIGNMENT means dispatched and waiting for the people named on it
 // to accept -- not waiting to be dispatched. Filing it under 派发 put a
@@ -133,15 +134,13 @@ export default function ManagePage() {
           {state.meeting_progress.total} 个任务 · 现在{" "}
           {formatDay(state.episode.current_sim_time as string)}
         </span>
-        <nav className="ml-auto flex gap-4 font-mono text-[0.75rem]">
+        <nav className="ml-auto flex items-center gap-4 font-mono text-[0.75rem]">
+          {/* The coordinator works here, not on /tasks, and every notice
+              addressed to them -- a submission waiting to be accepted, most of
+              all -- was only ever shown on the page they do not open. */}
+          <Bell state={state} act={act} onFocus={setSelected} />
           <a className="text-accent underline" href={pageUrl("/tasks")}>
             我的任务
-          </a>
-          {/* Root, not this meeting: the Observatory reads across all of
-              them and is gated by an operator credential rather than by who
-              runs this one. */}
-          <a className="text-accent underline" href="/observatory">
-            Observatory
           </a>
         </nav>
       </header>
@@ -165,7 +164,6 @@ export default function ManagePage() {
         pendingLabel={
           conflicts ? `${conflicts} 项工期冲突` : `${inFlight.length} 项执行中`
         }
-        why="每根条是团队留给这件事的时间，右端那道竖杠是团队要求交付的那天。虚线是本人承诺比它还晚的部分。点任一条，下面对应的卡片会高亮。"
       >
         <ScheduleStrip strip={strip} selected={selected} onPick={pick} />
         {inFlight.length ? (
@@ -197,7 +195,6 @@ export default function ManagePage() {
         pending={awaiting.length + openHints.length}
         pendingLabel={`${awaiting.length} 项待派发 · ${openHints.length} 条召回提示`}
         ownerOnly
-        why="抽取出来但还没派出去的任务。主负责人和协作者都在这里一次定下——任务负责人事后不能再拉人，只能向指定的人求助。全部被派到的人都接受，任务才进入执行。"
       >
         <div className="mb-3">
           <ManualAdd act={act} />
@@ -238,6 +235,7 @@ export default function ManagePage() {
       <Zone
         n="03"
         name="验收"
+        why="跟 01 是同一套卡片语言，但没有排期条——验收看的是内容不是时间。验收完的收进顶部的历史，不留在这里堆着。"
         anchor="zone-review"
         pending={toReview.length}
         pendingLabel={
@@ -245,7 +243,6 @@ export default function ManagePage() {
             ? `已完成 ${reviewed.length} 项`
             : `${toReview.length} 项待验收`
         }
-        why="跟 01 是同一套卡片语言，但没有排期条——验收看的是内容不是时间。验收完的收进顶部的历史，不留在这里堆着。"
       >
         {reviewHistory ? (
           reviewed.length ? (
@@ -478,10 +475,6 @@ function ManualAdd({ act }: { act: Act }) {
       </div>
       {open ? (
         <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
-          <p className="text-[0.76rem] leading-relaxed text-ink-3">
-            抽取出来的任务都带一句逐字稿原文，且系统核对过它确实出现在那个时间点。
-            手动补的没有这层核对，所以它会被标成「人工补录」，请写清楚会上是从哪儿来的。
-          </p>
           <label className="grid gap-1 text-[0.79rem]">
             任务名称
             <input
@@ -1022,7 +1015,6 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
               ? `等 ${remaining.length} 项验收完成`
               : "可以生成"
       }
-      why="全部必需任务验收后才汇总。生成之后是一张带来源版本号的报告，放行需要单独一次批准——生成不等于发布。"
     >
       <div className="overflow-hidden rounded-md border border-rule-2">
         <h3 className="border-b border-rule-2 bg-sunk px-3 py-2 text-[0.82rem] font-semibold">

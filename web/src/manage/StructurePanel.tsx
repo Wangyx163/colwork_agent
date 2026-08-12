@@ -71,12 +71,12 @@ export function StructurePanel({
     <Zone
       n="02b"
       name="收集 → 投票 → 定稿"
+      why="会议上说好「几个人分头收集 → 一个人汇总 → 大家打分 → 定稿」时，在这里说明一次。底层还是普通任务：照常派发、执行、验收，只是把它们的关系记下来。"
       pending={declared.length}
       pendingLabel={
         declared.length ? `${declared.length} 组进行中` : "还没有声明"
       }
       ownerOnly
-      why="会议上说好「几个人分头收集 → 一个人汇总 → 大家打分 → 定稿」时，在这里说明一次。底层还是普通任务：照常派发、执行、验收，只是汇总任务会等上游全部验收完才解锁。"
     >
       {declared.length ? (
         <div className="mb-3 grid gap-2">

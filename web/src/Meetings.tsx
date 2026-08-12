@@ -44,8 +44,7 @@ export default function MeetingsPage() {
     <main className="mx-auto max-w-2xl px-5 py-10">
       <h1 className="text-[1.15rem] font-semibold tracking-tight">会议</h1>
       <p className="mt-1.5 max-w-[60ch] text-[0.85rem] leading-relaxed text-ink-2">
-        每场会有自己的地址、自己的参会名单、自己的登录。换一场会要重新选身份——
-        一个会的令牌在另一个会里不作数。
+        每场会有自己的地址、自己的参会名单、自己的登录。
       </p>
 
       {error ? (
@@ -89,6 +88,18 @@ export default function MeetingsPage() {
           ))}
         </ul>
       )}
+
+      {/* The operator surface belongs here rather than inside a meeting: it
+          reads across all of them, so reaching it from one implied a scope it
+          does not have. */}
+      <div className="mt-8 border-t border-rule-2 pt-5">
+        <a
+          className="font-mono text-[0.75rem] text-accent underline"
+          href="/observatory"
+        >
+          Agent Observatory
+        </a>
+      </div>
     </main>
   );
 }

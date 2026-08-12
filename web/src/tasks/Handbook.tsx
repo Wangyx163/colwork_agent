@@ -46,12 +46,15 @@ export interface MemoryRow {
  *  why every entry carries a collaborator hint: not "he works from drafts",
  *  but "send him the rough version early, editing together beats waiting". */
 export function Handbook({
+  n,
   memories,
   me,
   act,
   onOpenSurvey,
   unansweredCount,
 }: {
+  /** Position in the page, decided by the page. */
+  n: string;
   memories: MemoryRow[];
   me: string;
   act: Act;
@@ -64,13 +67,13 @@ export function Handbook({
 
   return (
     <Zone
-      n="03"
+      n={n}
       name="Memory"
+      why="系统观察到的你的协作习惯。不影响权限、任务状态或验收——只用来告诉同事该怎么跟你配合，而且没经你确认的，别人看不到。"
       pending={drafts.length}
       pendingLabel={
         drafts.length ? `${drafts.length} 条待你确认` : `${confirmed.length} 条`
       }
-      why="系统观察到的你的协作习惯。不影响权限、任务状态或验收——只用来告诉同事该怎么跟你配合，而且没经你确认的，别人看不到。"
     >
       {drafts.length ? (
         <div className="mb-3 grid gap-2">

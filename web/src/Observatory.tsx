@@ -75,10 +75,6 @@ export default function ObservatoryPage() {
         <h1 className="text-[1.1rem] font-semibold tracking-tight">
           Agent Observatory
         </h1>
-        <p className="mt-2 text-[0.85rem] leading-relaxed text-ink-2">
-          这里能看到所有会议的审计、Outbox 和模型调用，所以它不按会议身份开放——
-          用的是运维令牌，进程启动时会打印在控制台。
-        </p>
         <form
           className="mt-5 grid gap-2"
           onSubmit={(event) => {
@@ -108,9 +104,6 @@ export default function ObservatoryPage() {
             </button>
           </div>
         </form>
-        <p className="mt-4 text-[0.76rem] leading-relaxed text-ink-3">
-          重启换令牌是正常的。想固定下来，启动前设 COLWORK_OPERATOR_TOKEN。
-        </p>
       </main>
     );
   }
@@ -214,36 +207,32 @@ export default function ObservatoryPage() {
         </aside>
 
         <div className="min-w-0">
-          <div className="mb-3 grid gap-px overflow-hidden rounded-md border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-8 grid gap-px overflow-hidden rounded-md border border-rule bg-rule sm:grid-cols-2 lg:grid-cols-4">
             <Tile
               label="重复外发"
               value={String(h.duplicate_sends)}
-              sub={`${h.delivered} 次投递，${h.deduplicated} 次幂等命中`}
+              sub=""
               tone={h.duplicate_sends === 0 ? "ok" : "plain"}
             />
             <Tile
               label="人推翻模型"
               value={`${h.human_overruled ?? 0} / ${h.model_advised ?? 0}`}
-              sub="模型给了建议，人否了这么多次"
+              sub=""
               tone="series"
             />
             <Tile
               label="引用幻觉率"
               value={rate == null ? "—" : rate.toFixed(1)}
-              sub={`${h.conclusion_points ?? 0} 个结论，0 个引用未读来源`}
+              sub=""
               tone={rate === 0 ? "ok" : "plain"}
             />
             <Tile
               label="审计事件"
               value={String(h.audit_events)}
-              sub={`序号 ${data.audit.first}–${data.audit.last}，连续`}
+              sub=""
               tone="plain"
             />
           </div>
-          <p className="mb-8 max-w-[62ch] text-[0.82rem] text-ink-3">
-            这一行就是三十秒能讲完的部分。「人推翻模型」用的是序列色而不是警示色——
-            它不是异常，是这套系统的设计目标被观测到了。
-          </p>
 
           <ContextPanel data={data} />
           <ResultPanel data={data} />

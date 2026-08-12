@@ -336,6 +336,43 @@ def available_runs(db: Any) -> list[dict[str, Any]]:
     ]
 
 
+def constitution_guards(db: Any, *, run_id: str) -> dict[str, Any]:
+    """The Constitution checks, with a number only where one is measured.
+
+    The panel above these used to render six literals -- five zeros and a one.
+    It therefore reported one authorization rejection against a database
+    holding eleven, and reported five guards clean without consulting anything.
+    A zero there is a claim ("checked, and clean"); a literal zero is that claim
+    made without looking.
+
+    Rejections are counted from the audit trail, which is where they are
+    recorded. The five invocation guards are detected inside `build_report`,
+    which needs a content pack this surface does not have, so they report None
+    -- shown as a dash rather than as a zero, because "nothing measures this"
+    and "measured, found nothing" must not look the same.
+    """
+
+    counted = {
+        row["event_type"]: int(row["n"])
+        for row in db.all(
+            "SELECT event_type, COUNT(*) AS n FROM audit_events "
+            "WHERE run_id = ? AND event_type IN "
+            "('AuthorizationRejected', 'AuthenticationRejected') "
+            "GROUP BY event_type",
+            (run_id,),
+        )
+    }
+    return {
+        "authorization_rejected": counted.get("AuthorizationRejected", 0),
+        "authentication_rejected": counted.get("AuthenticationRejected", 0),
+        "missing_manifest": None,
+        "field_violations": None,
+        "principal_violations": None,
+        "binary_leaks": None,
+        "input_hash_mismatches": None,
+    }
+
+
 def build_observatory(db: Any, *, episode_id: str, run_id: str) -> dict[str, Any]:
     """One run, assembled for the page."""
 
@@ -365,6 +402,7 @@ def build_observatory(db: Any, *, episode_id: str, run_id: str) -> dict[str, Any
         "outbox": outbox,
         "results": _result_flow(db, episode_id=episode_id),
         "human_gates": gates,
+        "constitution_guards": constitution_guards(db, run_id=run_id),
         "citations": citations,
         "audit": audit,
         "tokens": tokens,

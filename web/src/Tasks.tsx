@@ -106,6 +106,19 @@ export default function TasksPage() {
   const compound = (state.compound_tasks ?? []).filter(
     (task) => task.stage !== "REVOKED",
   );
+  // Numbered by what actually renders. Two sections are conditional, so a
+  // fixed number both collides (投票 and Memory were both 03) and leaves a gap
+  // when one is hidden -- and a gap in a sequence reads as something that
+  // failed to load.
+  const shown = [
+    "live",
+    ...(compound.length ? ["compound"] : []),
+    ...(votes.length ? ["votes"] : []),
+    "memory",
+  ];
+  const zoneNumber = (key: string) =>
+    String(shown.indexOf(key) + 1).padStart(2, "0");
+
   const compoundOwed = compound.filter((task) => task.my_turn).length;
   const coordinator = state.allowed_surfaces.includes("manage");
 
@@ -159,13 +172,12 @@ export default function TasksPage() {
       ) : null}
 
       <Zone
-        n="01"
+        n={zoneNumber("live")}
         name="进行中"
         pending={live.length}
         pendingLabel={
           history ? `已验收 ${done.length} 项` : `${live.length} 项进行中`
         }
-        why="派发要你回应、进展要你报、做完了在这里提交。每张卡片只留跟当前状态有关的动作。"
       >
         {history ? (
           done.length ? (
@@ -213,14 +225,14 @@ export default function TasksPage() {
 
       {compound.length ? (
         <Zone
-          n="02"
+          n={zoneNumber("compound")}
           name="复合任务"
+          why="会上定下的多环节协作：大家各自填 → 一个人汇总 → 大家投票 → 那个人定稿。每一环节都要所有人交齐才往下走。"
           anchor="zone-compound"
           pending={compoundOwed}
           pendingLabel={
             compoundOwed ? `${compoundOwed} 项轮到你` : "都不在你这儿"
           }
-          why="会上定下的多环节协作：大家各自填 → 一个人汇总 → 大家投票 → 那个人定稿。每一环节都要所有人交齐才往下走。"
         >
           <div className="grid gap-2">
             {compound.map((task) => (
@@ -237,11 +249,11 @@ export default function TasksPage() {
 
       {votes.length ? (
         <Zone
-          n="03"
+          n={zoneNumber("votes")}
           name="投票"
+          why="问题清单收齐后由整理人生成候选，指定的投票人全部打完分才解锁定稿。"
           pending={votes.length}
           pendingLabel={`${votes.length} 项需要你参与`}
-          why="问题清单收齐后由整理人生成候选，指定的投票人全部打完分才解锁定稿。"
         >
           <div className="grid gap-2">
             {votes.map((task) => (
@@ -257,6 +269,7 @@ export default function TasksPage() {
       ) : null}
 
       <Handbook
+        n={zoneNumber("memory")}
         memories={state.memories ?? []}
         me={me}
         act={act}

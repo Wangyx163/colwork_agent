@@ -1,28 +1,47 @@
 import { useState } from "react";
-import { Funnel, Guard, Note, Panel } from "./components";
+import { Funnel, Guard, Panel } from "./components";
 import type { Observatory } from "./types";
 
 export function ContextPanel({ data }: { data: Observatory }) {
-  const guards = data.human_gates;
+  // These six were literal strings -- five zeros and a one -- with the payload
+  // bound to a variable that no rendered element read. The panel therefore
+  // reported "授权拒绝 1" against a database holding eleven, and reported five
+  // guards as clean without consulting anything. Numbers now come from the
+  // payload, and a guard with nothing behind it says so.
+  const guards = data.constitution_guards;
+  const count = (value: number | null | undefined) =>
+    value == null ? null : String(value);
   return (
-    <Panel
-      title="Context 与授权"
-      source="SIG-CONTEXT-001 · SIG-AUTH-001"
-      why="每一次模型调用的输入都有一份可重算的 manifest。这里的每个 0 都是一条 Constitution 约束被实际验证，不是「暂时没出问题」。"
-    >
+    <Panel title="Context 与授权">
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        <Guard label="manifest 缺失" value="0" />
-        <Guard label="越权字段进入上下文" value="0" />
-        <Guard label="Principal 违规" value="0" />
-        <Guard label="附件二进制外泄" value="0" />
-        <Guard label="输入哈希不匹配" value="0" />
-        <Guard label="授权拒绝" value="1" hit />
+        <Guard label="manifest 缺失" value={count(guards?.missing_manifest)} hit />
+        <Guard
+          label="越权字段进入上下文"
+          value={count(guards?.field_violations)}
+          hit
+        />
+        <Guard
+          label="Principal 违规"
+          value={count(guards?.principal_violations)}
+          hit
+        />
+        <Guard label="附件二进制外泄" value={count(guards?.binary_leaks)} hit />
+        <Guard
+          label="输入哈希不匹配"
+          value={count(guards?.input_hash_mismatches)}
+          hit
+        />
+        <Guard
+          label="授权拒绝"
+          value={count(guards?.authorization_rejected)}
+          hit={(guards?.authorization_rejected ?? 0) > 0}
+        />
+        <Guard
+          label="鉴权拒绝"
+          value={count(guards?.authentication_rejected)}
+          hit={(guards?.authentication_rejected ?? 0) > 0}
+        />
       </div>
-      <Note>
-        <b>最后一格是好事。</b>1 次授权拒绝说明有越权尝试被挡住了；如果这里是 0，
-        反而无法证明鉴权在工作。<b>0 次绕过</b>才是要守的那个数。
-        {guards.memory_candidates_proposed != null ? null : null}
-      </Note>
     </Panel>
   );
 }
@@ -32,8 +51,6 @@ export function ResultPanel({ data }: { data: Observatory }) {
   return (
     <Panel
       title="成果处理漏斗"
-      source="SIG-RESULT-001 · SIG-VALIDATE-001"
-      why="单一序列跨有序阶段，所以用同一个颜色——阶段间的差值本身就是信息，不需要再给每段配色。"
     >
       <Funnel
         max={r.received}
@@ -56,8 +73,6 @@ export function GatePanel({ data }: { data: Observatory }) {
   return (
     <Panel
       title="人工闸口"
-      source="product-evaluation · human_gates"
-      why={`${advised} 个版本带着模型给出的验收建议进入人工复核，人推翻了其中 ${overruled} 个。这个数字不是模型质量指标，是闸口有效性指标。`}
     >
       <div className="grid gap-2">
         <div className="flex h-7 overflow-hidden rounded bg-sunk">
@@ -83,10 +98,6 @@ export function GatePanel({ data }: { data: Observatory }) {
           <span>人采纳模型建议</span>
         </div>
       </div>
-      <Note>
-        <b>如果这里长期是「采纳 {advised} / 推翻 0」，才需要警惕</b>
-        ——那说明人在盖章而不是在判断。系统把这个数记下来，就是为了让橡皮图章无处可藏。
-      </Note>
     </Panel>
   );
 }
@@ -97,8 +108,6 @@ export function OutboxPanel({ data }: { data: Observatory }) {
   return (
     <Panel
       title="Effect 与 Outbox"
-      source="SIG-OUTBOX-001"
-      why="领取数比创建数多，因为发生过重试；而投递数与创建数相等，因为适配器按 EffectId 认出了重复。这三个数字放在一起才说明幂等真的生效了。"
     >
       <Funnel
         max={max}
@@ -111,11 +120,6 @@ export function OutboxPanel({ data }: { data: Observatory }) {
           { label: "死信", value: o.dead_letter, tone: "warn" },
         ]}
       />
-      <Note tone={data.headline.duplicate_sends === 0 ? "ok" : "warn"}>
-        重复外发 <b>{data.headline.duplicate_sends}</b>。判定口径是
-        <b>没有 effect_id 或外部消息 ID 出现两次</b>，不是「投递数减创建数」——
-        后者会在重试和幂等命中时误报。
-      </Note>
     </Panel>
   );
 }
@@ -126,8 +130,6 @@ export function AuditPanel({ data }: { data: Observatory }) {
   return (
     <Panel
       title={`审计时间线 · ${total} 条`}
-      source="按聚合类型分泳道，横轴为审计序号"
-      why="13 种聚合类型、51 种事件类型——用颜色区分会失控，所以身份由泳道承担，颜色只留给「是否异常」。横轴是审计序号：连续无断口本身就是 append-only 的证据。"
     >
       <div className="grid gap-[3px]">
         {lanes.map((lane) => (
@@ -161,11 +163,6 @@ export function AuditPanel({ data }: { data: Observatory }) {
         <span>#{Math.round((first + last) / 2)}</span>
         <span>#{last}</span>
       </div>
-      <Note>
-        <b>形状本身在讲故事。</b>ActionItem 密集在前段（复核派发），
-        ArtifactVersion 在中段（提交与返工），OutboxEntry 有一段连续爆发——
-        那是全员接受后的批量通知。悬停任一刻度可看事件类型。
-      </Note>
     </Panel>
   );
 }
@@ -178,11 +175,6 @@ export function TokenPanel({ data }: { data: Observatory }) {
         <p className="text-[0.9rem] text-ink-2">
           这次运行的 token 消耗是 <b className="font-mono">0</b>。
         </p>
-        <Note tone="ok">
-          <b>这是设计目标，不是缺数据。</b>确定性评测刻意不调用外部模型，
-          所以它可以无限次重跑而不产生成本，也不会因为模型输出变化而结论漂移。
-          选一次真实会议的运行可以看到实际消耗。
-        </Note>
       </Panel>
     );
   }
@@ -194,8 +186,6 @@ export function TokenPanel({ data }: { data: Observatory }) {
   return (
     <Panel
       title="Token 消耗"
-      source={`${summary.calls} 次调用 · 合计 ${summary.total_tokens.toLocaleString()}`}
-      why="每个点是一次真实调用，中位数与 [25,75] 区间画在背后。不用密度曲线：在这个调用次数上，曲线会画出样本支撑不了的形状，并且把最贵的那一次抹掉——而那正是唯一有人会找的东西。"
     >
       <div className="relative mb-1 h-[74px]">
         {summary.p25 != null && summary.p75 != null ? (
@@ -231,13 +221,6 @@ export function TokenPanel({ data }: { data: Observatory }) {
           <span>{hi.toLocaleString()}</span>
         </span>
       </div>
-      {summary.outliers.length ? (
-        <Note tone="warn">
-          有 {summary.outliers.length} 次调用落在 1.5×IQR 之外
-          （最贵 {Math.max(...summary.outliers).toLocaleString()}）。
-          点图会把它显示出来，曲线会把它抹平。
-        </Note>
-      ) : null}
     </Panel>
   );
 }
@@ -247,12 +230,9 @@ export function LineagePanel({ data }: { data: Observatory }) {
   const [selected, setSelected] = useState(
     () => versions.find((v) => v.contributed)?.version_id ?? "",
   );
-  const active = versions.find((v) => v.version_id === selected);
   return (
     <Panel
       title="Lineage 回溯"
-      source={`${fields.length} 条字段来源 · ${versions.length} 个版本`}
-      why="按版本索引而不是字段，因为有意思的问题是反着的：选一个已被替换的版本，看它贡献了什么。"
     >
       <div className="grid gap-3 lg:grid-cols-2">
         <div className="overflow-hidden rounded border border-rule-2">
@@ -316,14 +296,6 @@ export function LineagePanel({ data }: { data: Observatory }) {
           </div>
         </div>
       </div>
-      {active?.superseded ? (
-        <Note tone="ok">
-          <b>右侧一个字段都没高亮——这正是要看到的。</b>
-          这个版本已被新版本替换，终稿没有采用它的任何字段。
-          <code className="font-mono"> GATE-VER-001</code>
-          「终稿无旧版本混入」从一句断言变成了一次点击就能验的事。
-        </Note>
-      ) : null}
     </Panel>
   );
 }

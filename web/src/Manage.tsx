@@ -137,7 +137,10 @@ export default function ManagePage() {
           <a className="text-accent underline" href={pageUrl("/tasks")}>
             我的任务
           </a>
-          <a className="text-accent underline" href={pageUrl("/observatory")}>
+          {/* Root, not this meeting: the Observatory reads across all of
+              them and is gated by an operator credential rather than by who
+              runs this one. */}
+          <a className="text-accent underline" href="/observatory">
             Observatory
           </a>
         </nav>

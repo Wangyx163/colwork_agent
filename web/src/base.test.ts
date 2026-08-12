@@ -30,6 +30,27 @@ function sourceFiles(directory: string): string[] {
 
 const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
+/** The reads and links that belong to no meeting, so the ones that must not be
+ *  prefixed. Exempted by path rather than by file: if one of those pages ever
+ *  reaches for something else absolute, this still catches it.
+ *
+ *  `/observatory` reads across every meeting and is gated by an operator
+ *  credential rather than by a meeting role, so prefixing it would ask one
+ *  meeting for a reading of all of them. `/` is the meeting index.
+ */
+const ABOVE_EVERY_MEETING = new Set([
+  "/api/meetings",
+  "/api/observatory",
+  "/observatory",
+  "/",
+]);
+
+/** The path part alone: a query string and a template interpolation are both
+ *  things that follow the path rather than change which path it is. */
+function pathOf(raw: string): string {
+  return raw.split("?")[0].split("$")[0];
+}
+
 test("no page links to another page with an absolute path", () => {
   // Meetings.tsx is the one page above every meeting: its links come from the
   // server already carrying the slug, and prefixing them would ask a meeting
@@ -39,6 +60,7 @@ test("no page links to another page with an absolute path", () => {
     if (file.endsWith("Meetings.tsx")) continue;
     const text = readFileSync(file, "utf8");
     for (const match of text.matchAll(/href="(\/[^"]*)"/g)) {
+      if (ABOVE_EVERY_MEETING.has(pathOf(match[1]))) continue;
       offenders.push(`${file}: ${match[1]}`);
     }
   }
@@ -50,10 +72,6 @@ test("no page links to another page with an absolute path", () => {
   );
 });
 
-/** The one read that belongs to no meeting, so it is the one that must not be
- *  prefixed. Exempted by path rather than by file: if that page ever fetches
- *  something else absolute, this still catches it. */
-const ABOVE_EVERY_MEETING = new Set(["/api/meetings"]);
 
 test("every fetch goes through the api module", () => {
   // Same failure on the request side: a request sent without the prefix
@@ -63,7 +81,7 @@ test("every fetch goes through the api module", () => {
     if (file.endsWith("api.ts")) continue;
     const text = readFileSync(file, "utf8");
     for (const match of text.matchAll(/fetch\(\s*(["'`])(\/[^"'`]*)/g)) {
-      if (ABOVE_EVERY_MEETING.has(match[2])) continue;
+      if (ABOVE_EVERY_MEETING.has(pathOf(match[2]))) continue;
       offenders.push(`${file}: ${match[2]}`);
     }
   }

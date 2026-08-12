@@ -61,3 +61,23 @@ export function tokenKey(): string {
   const slug = meetingSlug();
   return slug ? `collabSessionToken:${slug}` : "collabSessionToken";
 }
+
+/** The Observatory's credential, which is not a meeting token.
+ *
+ *  Deliberately not keyed by meeting: the Observatory reads across all of
+ *  them, so a per-meeting copy would be a credential that implies a scope it
+ *  does not have. Held in localStorage rather than in the URL, because a token
+ *  in a URL ends up in history, in a screenshot, and in whatever somebody
+ *  pastes into chat.
+ */
+export const OPERATOR_TOKEN_KEY = "collabOperatorToken";
+
+export function operatorToken(): string {
+  return localStorage.getItem(OPERATOR_TOKEN_KEY) || "";
+}
+
+export function setOperatorToken(token: string): void {
+  const trimmed = token.trim();
+  if (trimmed) localStorage.setItem(OPERATOR_TOKEN_KEY, trimmed);
+  else localStorage.removeItem(OPERATOR_TOKEN_KEY);
+}

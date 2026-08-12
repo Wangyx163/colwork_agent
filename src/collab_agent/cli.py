@@ -602,6 +602,32 @@ def _start_feishu_side(
     return app.run
 
 
+def _announce_operator_token() -> str:
+    """Resolve the Observatory credential and say it once, at startup.
+
+    Printed rather than persisted. A token written to a file would survive
+    restarts and be one more secret sitting on disk for a diagnostics page; a
+    token the process states as it comes up is available exactly to whoever can
+    already see the process. When it came from the environment nothing is
+    printed but the fact -- the operator set it, so they have it, and echoing
+    somebody's own secret into a log is a cost with no benefit.
+    """
+
+    from .auth import OPERATOR_TOKEN_ENV, resolve_operator_token  # noqa: PLC0415
+
+    token, source = resolve_operator_token()
+    if source == "env":
+        print(f"Observatory 运维令牌：取自 {OPERATOR_TOKEN_ENV}", flush=True)
+    else:
+        print(f"Observatory 运维令牌：{token}", flush=True)
+        print(
+            "  （只有拿着它才能打开 /observatory。重启会换一个；"
+            f"想固定就设 {OPERATOR_TOKEN_ENV}。）",
+            flush=True,
+        )
+    return token
+
+
 def _announce_new_meeting(outcome: dict) -> None:
     """Say that a meeting imported from chat needs a restart to be served.
 
@@ -1263,12 +1289,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"({service.episode_id})"
             + ("  + Feishu" if args.feishu else "")
         )
+        operator_token = _announce_operator_token()
         try:
             serve_dashboard(
                 service,
                 host=args.host,
                 port=args.port,
                 result_processing_mode=args.result_processing,
+                operator_token=operator_token,
             )
         except KeyboardInterrupt:
             pass
@@ -1391,12 +1419,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"会议控制台：http://{args.host}:{args.port}/")
         for console in consoles:
             print(f"  http://{args.host}:{args.port}/{console.slug}/manage")
+        operator_token = _announce_operator_token()
         try:
             serve_console(
                 consoles,
                 host=args.host,
                 port=args.port,
                 result_processing_mode=args.result_processing,
+                operator_token=operator_token,
             )
         except KeyboardInterrupt:
             pass

@@ -16,6 +16,8 @@ from .auth import (
     Principal,
     PrincipalError,
     VirtualSessionPrincipalProvider,
+    operator_token_matches,
+    resolve_operator_token,
 )
 from . import compound_store
 from .attachments import MAX_ATTACHMENT_COUNT, MAX_TOTAL_ATTACHMENT_BYTES
@@ -31,6 +33,13 @@ from .models import ASSIGNMENT_RETURN_REASONS, OTHER_RETURN_REASON, parse_time
 # Base64 inflates the attachment ceiling by ~4/3; the rest covers JSON framing
 # and the text fields that travel with a delivery.
 MAX_REQUEST_BYTES = MAX_TOTAL_ATTACHMENT_BYTES * 4 // 3 + 1024 * 1024
+
+
+#: The operator surface. Not under a meeting: it reads across all of them,
+#: and a per-meeting copy could only ever be authorized by a meeting role
+#: while showing whatever episode the query string asked for.
+OBSERVATORY_API = "/api/observatory"
+OBSERVATORY_PAGES = ("/observatory", "/diagnostics")
 
 
 class RequestTooLarge(Exception):
@@ -1520,6 +1529,7 @@ def serve_dashboard(
     host: str = "127.0.0.1",
     port: int = 8765,
     result_processing_mode: str = "local",
+    operator_token: str = "",
 ) -> None:
     """One meeting at the root of the port, the way it has always worked."""
 
@@ -1528,6 +1538,7 @@ def serve_dashboard(
         host=host,
         port=port,
         result_processing_mode=result_processing_mode,
+        operator_token=operator_token,
     )
 
 
@@ -1537,6 +1548,7 @@ def serve_console(
     host: str = "127.0.0.1",
     port: int = 8765,
     result_processing_mode: str = "local",
+    operator_token: str = "",
 ) -> None:
     """Run the console until the process is stopped."""
 
@@ -1545,6 +1557,7 @@ def serve_console(
         host=host,
         port=port,
         result_processing_mode=result_processing_mode,
+        operator_token=operator_token,
     )
     server.timeout = 1.0
     try:
@@ -1560,6 +1573,7 @@ def build_console_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     result_processing_mode: str = "local",
+    operator_token: str = "",
 ) -> HTTPServer:
     """Build the server without starting it.
 
@@ -1587,6 +1601,30 @@ def build_console_server(
     if len(by_slug) not in (0, len(consoles)):
         raise ValueError("either every meeting is slugged or none is")
     root_console = consoles[0] if not by_slug else None
+    # Generated when a caller does not supply one, so a deployment that never
+    # read the docs is closed rather than serving every meeting's audit trail
+    # to whoever finds the URL.
+    operator_secret = operator_token or resolve_operator_token()[0]
+    # Every console shares one database -- they are all built from it -- so any
+    # of them can answer for the whole installation, which is what an operator
+    # surface has to do.
+    observatory_db = consoles[0].service.db
+
+    def _observatory_target(query: dict[str, list[str]]) -> tuple[str, str]:
+        """Which run to show, defaulting to the newest rather than to a served
+        one: a meeting imported from chat exists in the database before any
+        process is serving it, and that is exactly when somebody wants to look
+        at it.
+        """
+
+        from .observatory import available_runs  # noqa: PLC0415
+
+        runs = available_runs(observatory_db)
+        newest = runs[0] if runs else {"episode_id": "", "run_id": ""}
+        return (
+            query.get("episode_id", [newest["episode_id"]])[0],
+            query.get("run_id", [newest["run_id"]])[0],
+        )
 
     def _meeting_index() -> list[dict[str, Any]]:
         """Enough to pick a door, and nothing from inside the room.
@@ -1674,6 +1712,42 @@ def build_console_server(
             self.end_headers()
             self.wfile.write(body)
 
+        def _is_operator(self) -> bool:
+            return operator_token_matches(
+                operator_secret, self.headers.get("Authorization")
+            )
+
+        def _serve_observatory(self, parsed: Any) -> None:
+            """The one read that spans every meeting, so the one that cannot be
+            authorized by a meeting role.
+
+            The page shell is served to anyone; the data is not. Gating the
+            shell too would leave nowhere to type the credential in, which is a
+            login screen you cannot reach rather than a secure one.
+            """
+
+            if not self._is_operator():
+                self._json(
+                    403,
+                    {
+                        "error": "OPERATOR_REQUIRED",
+                        "message": (
+                            "Observatory 需要运维令牌。进程启动时会把它打印出来，"
+                            "或者用 COLWORK_OPERATOR_TOKEN 自己设一个。"
+                        ),
+                    },
+                )
+                return
+            from .observatory import build_observatory  # noqa: PLC0415
+
+            episode_id, run_id = _observatory_target(parse_qs(parsed.query))
+            self._json(
+                200,
+                build_observatory(
+                    observatory_db, episode_id=episode_id, run_id=run_id
+                ),
+            )
+
         def _enter(self) -> EpisodeConsole | None:
             """Decide which meeting this request is for, once.
 
@@ -1751,6 +1825,17 @@ def build_console_server(
             ):
                 self._serve_bundle(urlparse(self.path).path)
                 return
+            # Above every meeting, in both modes, before any meeting is
+            # resolved. One door and one credential -- the previous shape put a
+            # copy of this inside each meeting, where the credential was that
+            # meeting's and the data was whichever the query string named.
+            here = urlparse(self.path)
+            if here.path == OBSERVATORY_API:
+                self._serve_observatory(here)
+                return
+            if here.path in OBSERVATORY_PAGES:
+                self._serve_bundle(here.path)
+                return
             if by_slug:
                 # The one question that belongs to no single meeting, so it is
                 # answered before a meeting is resolved -- and it is the only
@@ -1783,28 +1868,21 @@ def build_console_server(
                 )
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+            elif parsed.path in OBSERVATORY_PAGES:
+                # Reached only with a meeting prefix, which the entry above
+                # already stripped -- and checked before the bundle, which
+                # would otherwise serve this page happily under every meeting.
+                # Redirected rather than served so there is one Observatory URL
+                # instead of one per meeting, each looking like it showed that
+                # meeting. The API path deliberately does not redirect: a page
+                # can be bookmarked at the old address, but a client should be
+                # told its route is gone rather than silently re-pointed.
+                self.send_response(302)
+                self.send_header("Location", parsed.path)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
             elif bundle_serves(parsed.path):
                 self._serve_bundle(parsed.path)
-            elif parsed.path == "/api/observatory":
-                from .observatory import build_observatory
-
-                try:
-                    principal = self._principal()
-                    authorization.require_coordinator(principal)
-                except Exception as error:  # noqa: BLE001 - mirrors /api/state
-                    self._json(403, {"message": str(error)})
-                    return
-                requested = parse_qs(parsed.query)
-                self._json(
-                    200,
-                    build_observatory(
-                        service.db,
-                        episode_id=requested.get(
-                            "episode_id", [service.episode_id]
-                        )[0],
-                        run_id=requested.get("run_id", [service.run_id])[0],
-                    ),
-                )
             elif parsed.path == "/api/session/actors":
                 self._json(200, {"actors": principal_provider.list_selectable_actors()})
             elif parsed.path == "/api/state":
@@ -1863,6 +1941,17 @@ def build_console_server(
                 f"{ASSET_PREFIX}/"
             ):
                 self._serve_bundle(urlparse(self.path).path)
+                return
+            # Above every meeting, in both modes, before any meeting is
+            # resolved. One door and one credential -- the previous shape put a
+            # copy of this inside each meeting, where the credential was that
+            # meeting's and the data was whichever the query string named.
+            here = urlparse(self.path)
+            if here.path == OBSERVATORY_API:
+                self._serve_observatory(here)
+                return
+            if here.path in OBSERVATORY_PAGES:
+                self._serve_bundle(here.path)
                 return
             if by_slug and self.path.split("?")[0].rstrip("/") in ("", "/"):
                 # The door onto a multi-meeting console: which meetings exist

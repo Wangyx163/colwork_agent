@@ -172,6 +172,11 @@
         "status": "DONE",
         "note": "抽取按 stable_hash(逐字稿) 缓存，这正是抽取文件里 input_sha256 的值——所以 var/extractions/ 里已有的文件天然就是缓存条目，没有迁移。两种模式：cache 命不中就拒绝、绝不调模型（演示走这个）；live 命不中才抽。同一份逐字稿有多个抽取时取最新的（reviewed 覆盖 blind）。",
         "verified_by": "tests/test_intake_cache.py"
+      },
+      "OBSERVATORY_OPERATOR_ACCESS": {
+        "status": "DONE",
+        "note": "Observatory 挂在根上，不在任何会议下面，凭运维令牌进入——启动时打印，或用 COLWORK_OPERATOR_TOKEN 固定。这修的是一个真实漏洞：之前它按「你是不是这场会的负责人」放行，却把要看哪个 episode 做成查询参数；单会议一进程时无害（能填的只有自己那个），多会议共进程后变成跨会议读取——实测 A 会负责人用自己的令牌拿到了 B 会全部 750 条审计。根路径上没有 episode 就没有名单，「你是不是负责人」这个问题问不出来，所以换凭证不是绕路而是正解。页面壳子不设防（否则是个进不去的登录页），数据设防。",
+        "verified_by": "tests/test_observatory_access.py"
       }
     },
     "runtime": {

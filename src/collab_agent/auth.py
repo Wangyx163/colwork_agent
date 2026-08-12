@@ -293,3 +293,55 @@ class AuthorizationService:
         raise PrincipalError(
             "only the task executor or an active collaborator may perform this action"
         )
+
+
+#: Where an operator credential comes from when somebody sets one themselves.
+OPERATOR_TOKEN_ENV = "COLWORK_OPERATOR_TOKEN"
+
+
+def resolve_operator_token() -> tuple[str, str]:
+    """The credential for the Observatory, and where it came from.
+
+    The Observatory is an operator surface, not a role inside a meeting, and
+    that distinction is what fixes a real hole rather than papering over it.
+    While it was gated on "are you this meeting's coordinator" it also took the
+    episode to show as a query parameter -- harmless when a process served one
+    meeting, because the only episode you could name was your own, and a
+    cross-meeting read the moment one process served several.
+
+    At the root there is no episode, so there is no roster, so "are you the
+    coordinator" is not a question that can be asked. A separate credential is
+    therefore not a workaround for the move; it is the reason the move is
+    correct.
+
+    Returns (token, source). Generated per process when nothing is set: a
+    default of "open" would mean every deployment that never read the docs is
+    serving every meeting's audit trail to anyone who finds the URL.
+    """
+
+    from os import environ  # noqa: PLC0415 - read at call time, not at import
+    from secrets import token_urlsafe  # noqa: PLC0415
+
+    configured = (environ.get(OPERATOR_TOKEN_ENV) or "").strip()
+    if configured:
+        return configured, "env"
+    return token_urlsafe(24), "generated"
+
+
+def operator_token_matches(expected: str, authorization_header: str | None) -> bool:
+    """Whether a request carries the operator credential.
+
+    Compared with `compare_digest` because this is a secret, and a plain `==`
+    on a secret leaks its length and prefix through timing. Cheap to do right.
+    """
+
+    from secrets import compare_digest  # noqa: PLC0415
+
+    if not expected:
+        return False
+    raw = (authorization_header or "").strip()
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip()
+    if not raw:
+        return False
+    return compare_digest(raw, expected)

@@ -10,8 +10,7 @@ import {
   TokenPanel,
 } from "./panels";
 import type { Observatory } from "./types";
-import { apiUrl, authHeaders } from "./api";
-import { pageUrl } from "./base";
+import { operatorToken, setOperatorToken } from "./base";
 
 export default function ObservatoryPage() {
   const [data, setData] = useState<Observatory | null>(null);
@@ -20,15 +19,31 @@ export default function ObservatoryPage() {
     null,
   );
   const [railOpen, setRailOpen] = useState(true);
+  // Held in state as well as storage so that entering it re-runs the load
+  // without a refresh, and so a stale one can be cleared in place.
+  const [token, setToken] = useState(operatorToken);
+  const [typed, setTyped] = useState("");
+  const [needsToken, setNeedsToken] = useState(!operatorToken());
 
   useEffect(() => {
+    if (!token) return;
     const query = target
       ? `?run_id=${encodeURIComponent(target.run)}&episode_id=${encodeURIComponent(target.episode)}`
       : "";
     let cancelled = false;
-    fetch(apiUrl(`/api/observatory${query}`), { headers: authHeaders() })
+    // Not through apiUrl: the Observatory sits above every meeting, so
+    // prefixing it would ask one meeting for a reading of all of them.
+    fetch(`/api/observatory${query}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
       .then(async (response) => {
         const body = await response.json();
+        if (response.status === 403) {
+          // The usual cause is a restart: the process mints a new token each
+          // time unless one is configured, so a stored one goes stale rather
+          // than wrong. Re-asking beats an error page that cannot be acted on.
+          throw new Error("__stale__");
+        }
         if (!response.ok) throw new Error(body.message || "读取失败");
         return body as Observatory;
       })
@@ -39,26 +54,83 @@ export default function ObservatoryPage() {
         }
       })
       .catch((problem: Error) => {
-        if (!cancelled) setError(problem.message);
+        if (cancelled) return;
+        if (problem.message === "__stale__") {
+          setOperatorToken("");
+          setToken("");
+          setNeedsToken(true);
+          setError("");
+        } else {
+          setError(problem.message);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [target]);
+  }, [target, token]);
+
+  if (needsToken || !token) {
+    return (
+      <main className="mx-auto max-w-md px-5 py-16">
+        <h1 className="text-[1.1rem] font-semibold tracking-tight">
+          Agent Observatory
+        </h1>
+        <p className="mt-2 text-[0.85rem] leading-relaxed text-ink-2">
+          这里能看到所有会议的审计、Outbox 和模型调用，所以它不按会议身份开放——
+          用的是运维令牌，进程启动时会打印在控制台。
+        </p>
+        <form
+          className="mt-5 grid gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setOperatorToken(typed);
+            setToken(typed.trim());
+            setNeedsToken(!typed.trim());
+          }}
+        >
+          <label className="grid gap-1 text-[0.79rem]">
+            运维令牌
+            <input
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className="rounded border border-rule bg-raise px-2 py-1.5 font-mono text-[0.82rem]"
+            />
+          </label>
+          <div>
+            <button
+              type="submit"
+              disabled={!typed.trim()}
+              className="rounded border border-rule bg-raise px-3 py-1 text-[0.8rem] hover:bg-ground disabled:opacity-40"
+            >
+              进入
+            </button>
+          </div>
+        </form>
+        <p className="mt-4 text-[0.76rem] leading-relaxed text-ink-3">
+          重启换令牌是正常的。想固定下来，启动前设 COLWORK_OPERATOR_TOKEN。
+        </p>
+      </main>
+    );
+  }
 
   if (error) {
     return (
       <main className="mx-auto max-w-2xl p-8">
         <h1 className="text-xl font-bold">打不开 Observatory</h1>
         <p className="mt-3 text-ink-2">{error}</p>
-        <p className="mt-3 text-[0.88rem] text-ink-3">
-          这个页面只对会议负责人开放。请先在
-          <a className="text-accent underline" href={pageUrl("/tasks")}>
-            {" "}
-            工作台{" "}
-          </a>
-          选择负责人身份，再回到这里。
-        </p>
+        <button
+          onClick={() => {
+            setOperatorToken("");
+            setToken("");
+            setNeedsToken(true);
+            setError("");
+          }}
+          className="mt-4 rounded border border-rule bg-raise px-3 py-1 text-[0.8rem] hover:bg-ground"
+        >
+          换一个令牌
+        </button>
       </main>
     );
   }
@@ -83,10 +155,10 @@ export default function ObservatoryPage() {
           {data.audit.total} 事件
         </span>
         <a
-          href={pageUrl("/manage")}
+          href="/"
           className="ml-auto font-mono text-[0.75rem] text-accent underline"
         >
-          回到工作台
+          回到会议列表
         </a>
       </header>
 

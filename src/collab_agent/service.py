@@ -55,6 +55,8 @@ NOTIFY_TASK_AT_RISK = "TASK_AT_RISK"
 NOTIFY_HANDOFF_PROPOSED = "HANDOFF_PROPOSED"
 NOTIFY_HANDOFF_DECIDED = "HANDOFF_DECIDED"
 NOTIFY_INTERIM_DELIVERY = "INTERIM_DELIVERY"
+NOTIFY_SCOPE_CHANGE_PROPOSED = "SCOPE_CHANGE_PROPOSED"
+NOTIFY_SCOPE_CHANGE_DECIDED = "SCOPE_CHANGE_DECIDED"
 NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
 NOTIFY_COMPOUND_TURN = "COMPOUND_TURN"
 #: The two things a task owner may change about their own task, in the words
@@ -84,6 +86,8 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_HANDOFF_PROPOSED,
         NOTIFY_HANDOFF_DECIDED,
         NOTIFY_INTERIM_DELIVERY,
+        NOTIFY_SCOPE_CHANGE_PROPOSED,
+        NOTIFY_SCOPE_CHANGE_DECIDED,
         NOTIFY_ASSISTANCE_RESOLVED,
         NOTIFY_COMPOUND_TURN,
     }
@@ -4254,6 +4258,329 @@ class CoordinationService:
     HANDOFF_STATUSES = frozenset(
         {ActionItemStatus.TRACKING, ActionItemStatus.BLOCKED}
     )
+
+    def propose_scope_change(
+        self,
+        action_item_id: str,
+        *,
+        actor_id: str,
+        proposed_deliverable: str,
+        reason: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        """Ask to owe something different from what was dispatched.
+
+        There were two ways to change a task and neither fit. `amend_task_
+        description` lets the owner reword what the task *says* -- unilateral,
+        and deliberately not a change to what is owed. Returning it sends the
+        whole dispatch back. So somebody who could do most of a task but not
+        all of it had to either quietly under-deliver and argue at acceptance,
+        or hand back work they were most of the way through.
+
+        The coordinator decides, because scope is precisely what they
+        dispatched: they picked this deliverable and put it on somebody's
+        plate. Wording is the owner's; the debt is not.
+
+        Nothing changes while it is pending. The task keeps its current
+        deliverable and stays where it is -- a proposal that silently reduced
+        what was owed would let anybody rewrite their own commitment by asking.
+        """
+
+        late = self._ignore_if_archived(
+            message_id=message_id, aggregate_id=action_item_id
+        )
+        if late:
+            return late
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        proposed_deliverable = (proposed_deliverable or "").strip()
+        reason = (reason or "").strip()
+        if not proposed_deliverable:
+            raise ValueError("say what the task should deliver instead")
+        if not reason:
+            raise ValueError("a scope change needs a reason")
+
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+
+        with self.db.transaction() as cursor:
+            action = cursor.execute(
+                "SELECT * FROM action_items WHERE action_item_id = ? "
+                "AND episode_id = ?",
+                (action_item_id, self.episode_id),
+            ).fetchone()
+            if not action:
+                raise KeyError(action_item_id)
+            if action["status"] not in self.AMENDABLE_STATUSES:
+                raise ValueError("only a task being worked on may change scope")
+            definition_version = int(action["definition_version"] or 1)
+            mine = cursor.execute(
+                "SELECT 1 AS ok FROM action_item_assignments "
+                "WHERE action_item_id = ? AND definition_version = ? "
+                "AND actor_id = ? AND response_status = 'ACCEPTED'",
+                (action_item_id, definition_version, actor_id),
+            ).fetchone()
+            if not mine:
+                raise PermissionError(
+                    "only somebody working on this task may propose a scope change"
+                )
+            open_request = cursor.execute(
+                "SELECT 1 AS ok FROM scope_change_requests "
+                "WHERE action_item_id = ? AND status = 'PENDING'",
+                (action_item_id,),
+            ).fetchone()
+            if open_request:
+                raise ValueError("this task already has a scope change waiting")
+
+            metadata = self.proposal_metadata(action)
+            current = str(metadata.get("deliverable") or "")
+            if proposed_deliverable == current:
+                raise ValueError("that is what the task already asks for")
+
+            request_id = f"scope_{uuid4().hex[:20]}"
+            cursor.execute(
+                "INSERT INTO scope_change_requests("
+                "request_id, action_item_id, definition_version, "
+                "proposed_by_actor_id, proposed_deliverable, reason, status, "
+                "source_message_id, proposed_sim_time"
+                ") VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)",
+                (
+                    request_id,
+                    action_item_id,
+                    definition_version,
+                    actor_id,
+                    proposed_deliverable,
+                    reason,
+                    message_id,
+                    sim_time,
+                ),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItem",
+                aggregate_id=action_item_id,
+                event_type="ScopeChangeProposed",
+                sim_time=sim_time,
+                payload={
+                    "request_id": request_id,
+                    "proposed_by": actor_id,
+                    "before": current,
+                    "after": proposed_deliverable,
+                    "reason": reason,
+                },
+                correlation_id=correlation_id,
+            )
+            proposer = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+            coordinators = [
+                row["actor_id"]
+                for row in cursor.execute(
+                    "SELECT actor_id FROM episode_participants "
+                    "WHERE episode_id = ? AND role IN ('COORDINATOR','AGGREGATOR')",
+                    (self.episode_id,),
+                ).fetchall()
+            ]
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_SCOPE_CHANGE_PROPOSED,
+                recipient_actor_ids=[
+                    one for one in coordinators if one != actor_id
+                ],
+                action_item_id=action_item_id,
+                title=f'{proposer["display_name"]} 想改这条任务的范围',
+                summary=action["title"],
+                fields=[
+                    {"label": "现在要交的", "value": current or "（没写）"},
+                    {"label": "他提议改成", "value": proposed_deliverable},
+                    {"label": "原因", "value": reason},
+                    {
+                        "label": "在你答复前",
+                        "value": "任务照旧，交付要求没有变",
+                    },
+                ],
+                decisions=[
+                    {
+                        "decision": "SCOPE_ACCEPT",
+                        "label": "同意",
+                        "subject_id": request_id,
+                    },
+                    {
+                        "decision": "SCOPE_DECLINE",
+                        "label": "不同意",
+                        "subject_id": request_id,
+                    },
+                ],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                trigger_key=f"scope:{request_id}",
+                deep_link_path="/manage",
+                subject_id=request_id,
+            )
+            result = {
+                "request_id": request_id,
+                "action_item_id": action_item_id,
+                "status": "PENDING",
+                "deliverable_unchanged": current,
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
+
+    def decide_scope_change(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        accept: bool,
+        comment: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        """Agree to owe something different, or say no and say why.
+
+        Accepting rewrites the deliverable and the work requirements together:
+        the second is what the dispatch card actually put in front of somebody,
+        and leaving it on the old wording would make the task read one way here
+        and another way where it was accepted.
+
+        It does not bump `definition_version`. That number means "this dispatch
+        was superseded, everybody has to answer again", and agreeing to a
+        smaller scope with the same people is the opposite of that -- it is the
+        dispatch continuing on agreed terms.
+        """
+
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        self._require_aggregator(actor_id)
+        comment = (comment or "").strip()
+        if not accept and not comment:
+            # A refusal without a reason leaves the proposer with nothing to
+            # act on, which is how a negotiation becomes a wall.
+            raise ValueError("declining a scope change needs a reason")
+
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+
+        with self.db.transaction() as cursor:
+            request = cursor.execute(
+                "SELECT * FROM scope_change_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if not request:
+                raise KeyError(request_id)
+            if request["status"] != "PENDING":
+                raise ValueError("this scope change has already been answered")
+            action = cursor.execute(
+                "SELECT * FROM action_items WHERE action_item_id = ?",
+                (request["action_item_id"],),
+            ).fetchone()
+            if int(action["definition_version"] or 1) != int(
+                request["definition_version"]
+            ):
+                cursor.execute(
+                    "UPDATE scope_change_requests SET status = 'LAPSED', "
+                    "decided_sim_time = ? WHERE request_id = ?",
+                    (sim_time, request_id),
+                )
+                raise ValueError("this task was re-dispatched; the request lapsed")
+
+            metadata = self.proposal_metadata(action)
+            before = str(metadata.get("deliverable") or "")
+            if accept:
+                metadata["deliverable"] = request["proposed_deliverable"]
+                metadata["work_requirements"] = request["proposed_deliverable"]
+                cursor.execute(
+                    "UPDATE action_items SET proposal_metadata = ?, "
+                    "version = version + 1 WHERE action_item_id = ?",
+                    (canonical_json(metadata), request["action_item_id"]),
+                )
+            cursor.execute(
+                "UPDATE scope_change_requests SET status = ?, "
+                "decided_by_actor_id = ?, decision_comment = ?, "
+                "decided_sim_time = ? WHERE request_id = ?",
+                (
+                    "ACCEPTED" if accept else "DECLINED",
+                    actor_id,
+                    comment or None,
+                    sim_time,
+                    request_id,
+                ),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItem",
+                aggregate_id=request["action_item_id"],
+                event_type=(
+                    "ScopeChangeAccepted" if accept else "ScopeChangeDeclined"
+                ),
+                sim_time=sim_time,
+                payload={
+                    "request_id": request_id,
+                    "decided_by": actor_id,
+                    "before": before,
+                    "after": request["proposed_deliverable"] if accept else before,
+                    "comment": comment,
+                },
+                correlation_id=correlation_id,
+            )
+            audience = [
+                row["actor_id"]
+                for row in cursor.execute(
+                    "SELECT actor_id FROM action_item_assignments "
+                    "WHERE action_item_id = ? AND definition_version = ? "
+                    "AND response_status IN ('PENDING','ACCEPTED')",
+                    (
+                        request["action_item_id"],
+                        int(request["definition_version"]),
+                    ),
+                ).fetchall()
+            ]
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_SCOPE_CHANGE_DECIDED,
+                recipient_actor_ids=[one for one in audience if one != actor_id],
+                action_item_id=request["action_item_id"],
+                title=(
+                    "任务范围改了" if accept else "范围维持原样"
+                ),
+                summary=action["title"],
+                fields=[
+                    {
+                        "label": "现在要交的",
+                        "value": request["proposed_deliverable"] if accept else before,
+                        **({"was": before} if accept else {}),
+                    },
+                    {"label": "说明", "value": comment or "没有留下说明"},
+                ],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                trigger_key=f"scope-decided:{request_id}",
+            )
+            result = {
+                "request_id": request_id,
+                "action_item_id": request["action_item_id"],
+                "status": "ACCEPTED" if accept else "DECLINED",
+                "deliverable": (
+                    request["proposed_deliverable"] if accept else before
+                ),
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
 
     def propose_handoff(
         self,

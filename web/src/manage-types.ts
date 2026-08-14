@@ -345,6 +345,16 @@ export interface ManageState {
   compound_tasks?: CompoundTask[];
   notices: Notice[];
   pending_approvals: Approval[];
+  /** Scope changes waiting on the coordinator. */
+  pending_scope_changes?: {
+    request_id: string;
+    action_item_id: string;
+    proposed_by: string;
+    proposed_deliverable: string;
+    current_deliverable: string;
+    reason: string;
+    title: string;
+  }[];
   /** Handoffs offered to the reader and not yet answered. */
   pending_handoffs?: {
     handoff_id: string;

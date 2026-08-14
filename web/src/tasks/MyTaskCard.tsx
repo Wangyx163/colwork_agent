@@ -42,7 +42,15 @@ const HELP_LABEL: Record<string, string> = {
   OTHER: "其它",
 };
 
-type Panel = "" | "return" | "commit" | "help" | "submit" | "amend" | "handoff";
+type Panel =
+  | ""
+  | "return"
+  | "commit"
+  | "help"
+  | "submit"
+  | "amend"
+  | "handoff"
+  | "scope";
 
 export function MyTaskCard({
   task,
@@ -138,6 +146,11 @@ export function MyTaskCard({
                 tone: "ghost" as const,
                 run: () => toggle("handoff"),
               },
+              {
+                label: "改范围",
+                tone: "ghost" as const,
+                run: () => toggle("scope"),
+              },
             ]
           : []),
       ];
@@ -231,6 +244,26 @@ export function MyTaskCard({
                   },
                   "承诺时间已更新",
                 )
+              }
+            />
+          ) : null}
+
+          {panel === "scope" ? (
+            <ScopePanel
+              current={task.proposal_metadata?.deliverable as string | undefined}
+              onCancel={() => setPanel("")}
+              onSend={(deliverable, reason) =>
+                void act(async () => {
+                  await postJson(
+                    `/api/action-items/${task.action_item_id}/scope`,
+                    {
+                      proposed_deliverable: deliverable,
+                      reason,
+                      message_id: messageId("scope"),
+                    },
+                  );
+                  setPanel("");
+                }, "已提给会议负责人。在他答复前，要交的东西没有变")
               }
             />
           ) : null}
@@ -847,6 +880,72 @@ function HandoffPanel({
           onClick={() => onSend(target, reason)}
         >
           发出转交
+        </Button>
+        <Button tone="ghost" onClick={onCancel}>
+          取消
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+
+/** Asking to owe something different.
+ *
+ *  The copy separates this from 改任务说明 in the one way that matters: that
+ *  one is the owner rewording what the task says, this one is a request to
+ *  change what is owed, and only the person who dispatched it can agree.
+ */
+function ScopePanel({
+  current,
+  onCancel,
+  onSend,
+}: {
+  current?: string;
+  onCancel: () => void;
+  onSend: (deliverable: string, reason: string) => void;
+}) {
+  const [deliverable, setDeliverable] = useState(current ?? "");
+  const [reason, setReason] = useState("");
+
+  return (
+    <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
+      <p className="text-[0.79rem] leading-relaxed text-ink-3">
+        这是在提议改「要交什么」，不是改措辞——所以要会议负责人同意。
+        在他答复前，任务照旧。
+      </p>
+      <label className="grid gap-1 text-[0.79rem]">
+        现在要交的
+        <p className="rounded border border-rule-2 bg-sunk px-2 py-1 text-[0.82rem] text-ink-2">
+          {current || "（没写）"}
+        </p>
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        改成
+        <textarea
+          rows={2}
+          value={deliverable}
+          onChange={(event) => setDeliverable(event.target.value)}
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        为什么（必填）
+        <input
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="例：第三个部门这周联系不上"
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <div className="flex gap-2">
+        <Button
+          disabled={
+            !deliverable.trim() || !reason.trim() || deliverable.trim() === current
+          }
+          onClick={() => onSend(deliverable, reason)}
+        >
+          提给负责人
         </Button>
         <Button tone="ghost" onClick={onCancel}>
           取消

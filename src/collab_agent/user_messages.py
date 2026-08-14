@@ -156,6 +156,33 @@ USER_MESSAGES: dict[str, str] = {
     'that person already answered': (
         '这个人已经交了'
     ),
+    'say what the task should deliver instead': (
+        '写清楚这条任务改成要交什么'
+    ),
+    'a scope change needs a reason': (
+        '改范围要写原因'
+    ),
+    'only a task being worked on may change scope': (
+        '只有正在执行的任务可以改范围'
+    ),
+    'only somebody working on this task may propose a scope change': (
+        '只有在做这条任务的人可以提议改范围'
+    ),
+    'this task already has a scope change waiting': (
+        '这条任务已经有一个改范围的提议在等答复'
+    ),
+    'that is what the task already asks for': (
+        '这就是任务现在要求的内容'
+    ),
+    'declining a scope change needs a reason': (
+        '不同意改范围要写原因'
+    ),
+    'this scope change has already been answered': (
+        '这个提议已经答复过了'
+    ),
+    'this task was re-dispatched; the request lapsed': (
+        '这条任务被重新派发了，这个提议已失效'
+    ),
     'a handoff needs a reason': (
         '转交要写原因'
     ),

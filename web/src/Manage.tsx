@@ -191,6 +191,14 @@ export default function ManagePage() {
         )}
       </Zone>
 
+      {(state.pending_scope_changes ?? []).length ? (
+        <div className="mb-6 grid gap-2">
+          {(state.pending_scope_changes ?? []).map((request) => (
+            <ScopeRequest key={request.request_id} request={request} act={act} />
+          ))}
+        </div>
+      ) : null}
+
       {/* 02 --------------------------------------------------------------- */}
       <Zone
         n="02"
@@ -1139,5 +1147,73 @@ function FinalZone({ state, act }: { state: ManageState; act: Act }) {
         </span>
       </div>
     </Zone>
+  );
+}
+
+
+/** Somebody asking to owe less than was dispatched.
+ *
+ *  Above the zones rather than inside one: it is not a stage the work passes
+ *  through, it is a question waiting on an answer, and burying it in 02 would
+ *  make it look like a task to dispatch.
+ */
+function ScopeRequest({
+  request,
+  act,
+}: {
+  request: NonNullable<ManageState["pending_scope_changes"]>[number];
+  act: Act;
+}) {
+  const [comment, setComment] = useState("");
+  const answer = (accept: boolean) => {
+    const path = accept
+      ? `/api/scope-changes/${request.request_id}/accept`
+      : `/api/scope-changes/${request.request_id}/decline`;
+    void act(
+      () =>
+        postJson(path, {
+          comment,
+          message_id: messageId("scope-decide"),
+        }),
+      accept ? "已同意，交付要求改了" : "已回复，交付要求维持原样",
+    );
+  };
+
+  return (
+    <article className="rounded-md border border-accent bg-accent-wash px-3.5 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <b className="text-[0.9rem]">{request.proposed_by} 想改这条的范围</b>
+        <span className="rounded-full bg-raise px-2 py-px font-mono text-[0.7rem] text-ink-3">
+          等你答复
+        </span>
+      </div>
+      <p className="mt-1 text-[0.85rem] font-medium">{request.title}</p>
+      <dl className="mt-2 grid gap-1 text-[0.82rem] sm:grid-cols-[6rem_1fr]">
+        <dt className="font-mono text-[0.72rem] text-ink-3">现在要交</dt>
+        <dd className="m-0 text-ink-2 line-through decoration-rule">
+          {request.current_deliverable || "（没写）"}
+        </dd>
+        <dt className="font-mono text-[0.72rem] text-ink-3">提议改成</dt>
+        <dd className="m-0">{request.proposed_deliverable}</dd>
+        <dt className="font-mono text-[0.72rem] text-ink-3">原因</dt>
+        <dd className="m-0 text-ink-2">{request.reason}</dd>
+      </dl>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <input
+          value={comment}
+          onChange={(event) => setComment(event.target.value)}
+          placeholder="不同意的话必须写原因"
+          className="min-w-[12rem] flex-1 rounded border border-rule bg-raise px-2 py-1 text-[0.8rem]"
+        />
+        <Button onClick={() => answer(true)}>同意</Button>
+        <Button
+          tone="ghost"
+          disabled={!comment.trim()}
+          onClick={() => answer(false)}
+        >
+          不同意
+        </Button>
+      </div>
+    </article>
   );
 }

@@ -1213,6 +1213,38 @@ def workbench_state(
             if principal
             else []
         ),
+        # Scope changes waiting on the coordinator. Same reason the handoffs
+        # are projected: the bell filters out anything that asks for a
+        # decision, and a scope request is not an assignment, so it would have
+        # nowhere to land.
+        "pending_scope_changes": (
+            [
+                {
+                    "request_id": row["request_id"],
+                    "action_item_id": row["action_item_id"],
+                    "proposed_by": row["proposed_by"],
+                    "proposed_deliverable": row["proposed_deliverable"],
+                    "reason": row["reason"],
+                    "title": row["title"],
+                    "current_deliverable": (
+                        _decode_json(row["proposal_metadata"]) or {}
+                    ).get("deliverable", ""),
+                }
+                for row in db.all(
+                    "SELECT r.request_id, r.action_item_id, "
+                    "r.proposed_deliverable, r.reason, "
+                    "a.display_name AS proposed_by, i.title, i.proposal_metadata "
+                    "FROM scope_change_requests r "
+                    "JOIN actors a ON a.actor_id = r.proposed_by_actor_id "
+                    "JOIN action_items i ON i.action_item_id = r.action_item_id "
+                    "WHERE r.status = 'PENDING' AND i.episode_id = ? "
+                    "ORDER BY r.proposed_sim_time",
+                    (episode["episode_id"],),
+                )
+            ]
+            if principal
+            else []
+        ),
         "participants": list(participants_by_id.values()),
         "memories": memories,
         "memory_lexicon": memory_lexicon_payload(),
@@ -1699,7 +1731,7 @@ def build_console_server(
 
     approval_path = re.compile(r"^/api/approvals/([^/]+)$")
     action_path = re.compile(
-        r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote|handoff)$"
+        r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote|handoff|scope)$"
     )
     review_hint_path = re.compile(r"^/api/review-hints/([^/]+)/materialize$")
     collaboration_structure_path = re.compile(
@@ -1712,6 +1744,7 @@ def build_console_server(
         r"^/api/assistance/([^/]+)/(acknowledge|resolve|cancel)$"
     )
     handoff_path = re.compile(r"^/api/handoffs/([^/]+)/(accept|decline)$")
+    scope_path = re.compile(r"^/api/scope-changes/([^/]+)/(accept|decline)$")
     final_generate_path = re.compile(r"^/api/final/generate$")
     action_add_path = re.compile(r"^/api/action-items$")
     memory_declare_path = re.compile(r"^/api/memories/declare$")
@@ -2065,6 +2098,7 @@ def build_console_server(
             )
             assistance_match = assistance_path.match(parsed.path)
             handoff_match = handoff_path.match(parsed.path)
+            scope_match = scope_path.match(parsed.path)
             memory_match = memory_path.match(parsed.path)
             memory_declare_match = memory_declare_path.match(parsed.path)
             structure_revoke_match = collaboration_structure_revoke_path.match(
@@ -2087,6 +2121,7 @@ def build_console_server(
                 and not structure_revoke_match
                 and not assistance_match
                 and not handoff_match
+                and not scope_match
                 and not memory_match
                 and not memory_declare_match
                 and not artifact_match
@@ -2274,6 +2309,20 @@ def build_console_server(
                         actor_id=principal.actor_id,
                         message_id=payload.get("message_id", ""),
                     )
+                elif scope_match:
+                    # Scope is what the coordinator dispatched, so answering a
+                    # request to change it is theirs.
+                    authorization.require_coordinator(principal)
+                    request_id, decision = scope_match.groups()
+                    result = service.decide_scope_change(
+                        request_id,
+                        actor_id=principal.actor_id,
+                        accept=decision == "accept",
+                        comment=payload.get("comment", ""),
+                        message_id=self._message_id(payload),
+                    )
+                    self._json(200, result)
+                    return
                 elif handoff_match:
                     # Only the person it was offered to may answer, which the
                     # service checks against the handoff row -- there is no
@@ -2427,6 +2476,19 @@ def build_console_server(
                                 "target_action_item_id", ""
                             ),
                             actor_id=principal.actor_id,
+                            message_id=message_id,
+                        )
+                    elif operation == "scope":
+                        authorization.require_action_contributor(
+                            principal, action_id
+                        )
+                        result = service.propose_scope_change(
+                            action_id,
+                            actor_id=principal.actor_id,
+                            proposed_deliverable=payload.get(
+                                "proposed_deliverable", ""
+                            ),
+                            reason=payload.get("reason", ""),
                             message_id=message_id,
                         )
                     elif operation == "handoff":

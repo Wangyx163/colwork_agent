@@ -406,6 +406,21 @@ CREATE TABLE IF NOT EXISTS compound_task_inputs (
     UNIQUE (compound_task_id, stage, actor_id)
 );
 
+CREATE TABLE IF NOT EXISTS scope_change_requests (
+    request_id TEXT PRIMARY KEY,
+    action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),
+    definition_version INTEGER NOT NULL,
+    proposed_by_actor_id TEXT NOT NULL REFERENCES actors(actor_id),
+    proposed_deliverable TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL,
+    decided_by_actor_id TEXT,
+    decision_comment TEXT,
+    source_message_id TEXT NOT NULL,
+    proposed_sim_time TEXT NOT NULL,
+    decided_sim_time TEXT
+);
+
 CREATE TABLE IF NOT EXISTS assignment_handoffs (
     handoff_id TEXT PRIMARY KEY,
     action_item_id TEXT NOT NULL REFERENCES action_items(action_item_id),

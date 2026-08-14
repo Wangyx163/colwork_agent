@@ -278,21 +278,23 @@ export function MyTaskCard({
             <SubmitPanel
               draftKey={task.action_item_id}
               limits={state.vocabulary}
+              owner={owner}
               onCancel={() => setPanel("")}
-              onSend={(summary, content, files, clear) =>
+              onSend={(summary, content, files, interim, clear) =>
                 void act(async () => {
                   await postJson(
                     `/api/action-items/${task.action_item_id}/submit`,
                     {
                       delivery: { summary, content, files },
-                      message_id: messageId("submit"),
+                      interim,
+                      message_id: messageId(interim ? "interim" : "submit"),
                     },
                   );
                   // Only once it is safely on the server: clearing on submit
                   // would throw the text away if the request failed.
                   clear();
                   setPanel("");
-                }, "已提交，等负责人验收")
+                }, interim ? "已交这一部分，任务还在进行中" : "已提交，等负责人验收")
               }
             />
           ) : null}
@@ -585,16 +587,19 @@ interface Upload {
 function SubmitPanel({
   draftKey,
   limits,
+  owner,
   onCancel,
   onSend,
 }: {
   draftKey: string;
   limits: Vocabulary;
   onCancel: () => void;
+  owner: boolean;
   onSend: (
     summary: string,
     content: string,
     files: Upload[],
+    interim: boolean,
     clear: () => void,
   ) => void;
 }) {
@@ -704,13 +709,29 @@ function SubmitPanel({
         摘要和正文都必填——缺一样校验会判不通过，任务不会进入待验收。写到一半刷新也不会丢（附件除外）。
         PDF / Word / Excel / PPT 的正文会被读出来，供验收时核对。
       </p>
-      <div className="flex gap-2">
+      <p className="text-[0.75rem] text-ink-3">
+        「先交这一部分」不会进入验收，任务继续进行；会议负责人和协作者能看到你交了什么。
+      </p>
+      <div className="flex flex-wrap gap-2">
         <Button
           disabled={!summary.trim() || !content.trim()}
-          onClick={() => onSend(summary, content, files, clear)}
+          onClick={() => onSend(summary, content, files, false, clear)}
         >
           提交
         </Button>
+        {/* Only the owner, because only the owner's submission is the one that
+            would otherwise move the task into acceptance. A collaborator's
+            contribution already does not, so offering them the choice would
+            be offering a distinction they do not have. */}
+        {owner ? (
+          <Button
+            tone="ghost"
+            disabled={!summary.trim() || !content.trim()}
+            onClick={() => onSend(summary, content, files, true, clear)}
+          >
+            先交这一部分
+          </Button>
+        ) : null}
         <Button tone="ghost" onClick={onCancel}>
           取消
         </Button>

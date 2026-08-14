@@ -54,6 +54,7 @@ NOTIFY_TASK_REVISED = "TASK_REVISED"
 NOTIFY_TASK_AT_RISK = "TASK_AT_RISK"
 NOTIFY_HANDOFF_PROPOSED = "HANDOFF_PROPOSED"
 NOTIFY_HANDOFF_DECIDED = "HANDOFF_DECIDED"
+NOTIFY_INTERIM_DELIVERY = "INTERIM_DELIVERY"
 NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
 NOTIFY_COMPOUND_TURN = "COMPOUND_TURN"
 #: The two things a task owner may change about their own task, in the words
@@ -82,6 +83,7 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_TASK_AT_RISK,
         NOTIFY_HANDOFF_PROPOSED,
         NOTIFY_HANDOFF_DECIDED,
+        NOTIFY_INTERIM_DELIVERY,
         NOTIFY_ASSISTANCE_RESOLVED,
         NOTIFY_COMPOUND_TURN,
     }
@@ -6304,7 +6306,24 @@ class CoordinationService:
         actor_id: str,
         message_id: str,
         payload: dict[str, Any],
+        interim: bool = False,
     ) -> dict[str, Any]:
+        """Record a delivery. `interim` means "look at this, do not accept it".
+
+        Submitting used to be all or nothing: whatever the owner sent moved the
+        task into acceptance. Real work arrives in pieces -- "here is the half
+        that is usable, the rest lands Thursday" -- and with no way to say that,
+        people either sat on finished work until all of it was done, or handed
+        in a partial thing that the coordinator then had to reject for being
+        partial.
+
+        No new state carries this. A collaborator's contribution already means
+        "content that does not move the task into acceptance", and an interim
+        delivery is the same shape with a different author, so it takes the
+        same path. The difference lives in the audit event and in who is told,
+        because the two mean different things to a reader: one is waiting for
+        the owner, the other is showing the coordinator progress.
+        """
         late = self._ignore_if_archived(
             message_id=message_id, aggregate_id=action_item_id
         )
@@ -6426,6 +6445,12 @@ class CoordinationService:
                 "payload": safe_payload,
                 "attachment_extractions": attachment_extractions,
                 "submitted_by_actor_id": actor_id,
+                # Part of the identity of a submission, not a property of it.
+                # "Here is half of it" and "that half was the whole thing" are
+                # two different acts on the same text, and hashing only the
+                # text made the second one a no-op -- somebody who showed an
+                # interim and then decided it was finished got silence.
+                "interim": bool(interim),
             }
         )
         correlation_id = f"corr_{message_id}"
@@ -6595,7 +6620,7 @@ class CoordinationService:
                 (action_item_id,),
             ).fetchone()
             version_id = f"ver_{uuid4().hex}"
-            is_contribution = contributor_role != "OWNER"
+            is_contribution = contributor_role != "OWNER" or interim
             review_status = (
                 "PENDING"
                 if requires_human_acceptance
@@ -6715,20 +6740,79 @@ class CoordinationService:
             )
             if validation == ValidationStatus.PASSED:
                 if requires_human_acceptance and is_contribution:
+                    owner_interim = interim and contributor_role == "OWNER"
                     self.db.append_audit(
                         cursor,
                         run_id=self.run_id,
                         aggregate_type="ArtifactVersion",
                         aggregate_id=version_id,
-                        event_type="ArtifactContributionAwaitingOwner",
+                        event_type=(
+                            "ArtifactInterimDelivered"
+                            if owner_interim
+                            else "ArtifactContributionAwaitingOwner"
+                        ),
                         sim_time=sim_time,
                         payload={
                             "action_item_id": action_item_id,
                             "submitted_by_actor_id": actor_id,
                             "contributor_role": contributor_role,
+                            "interim": owner_interim,
                         },
                         correlation_id=correlation_id,
                     )
+                    if owner_interim:
+                        # The coordinator is the audience: an interim delivery
+                        # exists so that progress can be seen before the
+                        # deadline rather than reported in prose. Collaborators
+                        # on the task hear it too, because a half that is
+                        # already done changes what the rest of them should
+                        # build on.
+                        deliverer = cursor.execute(
+                            "SELECT display_name FROM actors WHERE actor_id = ?",
+                            (actor_id,),
+                        ).fetchone()
+                        audience = [
+                            row["actor_id"]
+                            for row in cursor.execute(
+                                "SELECT actor_id FROM episode_participants "
+                                "WHERE episode_id = ? AND role IN "
+                                "('COORDINATOR', 'AGGREGATOR')",
+                                (self.episode_id,),
+                            ).fetchall()
+                        ] + [
+                            row["actor_id"]
+                            for row in cursor.execute(
+                                "SELECT actor_id FROM action_item_assignments "
+                                "WHERE action_item_id = ? AND definition_version = ? "
+                                "AND response_status = 'ACCEPTED'",
+                                (
+                                    action_item_id,
+                                    int(authorized_action["definition_version"] or 1),
+                                ),
+                            ).fetchall()
+                        ]
+                        self._notify(
+                            cursor,
+                            effect_type=NOTIFY_INTERIM_DELIVERY,
+                            recipient_actor_ids=[
+                                one
+                                for one in dict.fromkeys(audience)
+                                if one != actor_id
+                            ],
+                            action_item_id=action_item_id,
+                            title=f'{deliverer["display_name"]} 交了一部分',
+                            summary=str(payload.get("summary") or "没有填写摘要"),
+                            fields=[
+                                {
+                                    "label": "这不是终版",
+                                    "value": "还没进验收，剩下的还在做",
+                                }
+                            ],
+                            correlation_id=correlation_id,
+                            sim_time=sim_time,
+                            trigger_key=f"interim:{version_id}",
+                            deep_link_path="/manage",
+                        )
                 elif requires_human_acceptance:
                     cursor.execute(
                         "UPDATE action_items SET status = ?, version = version + 1 "

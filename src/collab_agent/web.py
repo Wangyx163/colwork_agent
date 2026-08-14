@@ -767,6 +767,11 @@ def workbench_state(
                     "ArtifactContributionRevisionRequested": "REVISION_REQUESTED",
                     "ArtifactContributionPromotedToFinalCandidate": "PROMOTED",
                 }[decision_event["event_type"]]
+            elif version["submitted_by_actor_id"] == row["owner_actor_id"]:
+                # The owner's own non-final delivery. Calling this
+                # AWAITING_OWNER would say it is waiting on the person who
+                # sent it.
+                contribution_status = "INTERIM"
             else:
                 contribution_status = "AWAITING_OWNER"
             item["contribution_status"] = contribution_status
@@ -2512,6 +2517,7 @@ def build_console_server(
                             actor_id=principal.actor_id,
                             message_id=message_id,
                             payload=payload.get("delivery", {}),
+                            interim=bool(payload.get("interim")),
                         )
                 self._json(200, result)
             except PrincipalError as error:

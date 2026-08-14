@@ -93,12 +93,19 @@ class Scheduler:
             self.log(f"[scheduler] policy evaluation failed: {error!r}")
 
         if decisions:
-            kinds = ", ".join(
-                sorted({str(one.get("action_type") or "?") for one in decisions})
-            )
+            # `level`, not `action_type` -- a decision reports which escalation
+            # tier it opened, and the first version of this line printed "?"
+            # for every one of them. A log that cannot name what it saw is a
+            # log that gets ignored.
+            sent = [one for one in decisions if not one.get("suppressed")]
+            held = len(decisions) - len(sent)
+            levels = ", ".join(
+                sorted({str(one.get("level") or "?") for one in sent})
+            ) or "无"
             self.log(
                 f"[scheduler] {self.service.episode_id[-12:]}: "
-                f"{len(decisions)} 条到期动作（{kinds}）"
+                f"{len(sent)} 条到期动作（{levels}）"
+                + (f"，另有 {held} 条因当日触达上限被压下" if held else "")
             )
         return {
             "episode_id": self.service.episode_id,

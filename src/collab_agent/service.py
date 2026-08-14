@@ -51,6 +51,9 @@ NOTIFY_ASSISTANCE_REQUESTED = "ASSISTANCE_REQUESTED"
 NOTIFY_RESULT_PENDING_REVIEW = "RESULT_PENDING_REVIEW"
 NOTIFY_TASK_AMENDED = "TASK_AMENDED"
 NOTIFY_TASK_REVISED = "TASK_REVISED"
+NOTIFY_TASK_AT_RISK = "TASK_AT_RISK"
+NOTIFY_HANDOFF_PROPOSED = "HANDOFF_PROPOSED"
+NOTIFY_HANDOFF_DECIDED = "HANDOFF_DECIDED"
 NOTIFY_ASSISTANCE_RESOLVED = "ASSISTANCE_RESOLVED"
 NOTIFY_COMPOUND_TURN = "COMPOUND_TURN"
 #: The two things a task owner may change about their own task, in the words
@@ -76,6 +79,9 @@ NOTIFICATION_EFFECT_TYPES = frozenset(
         NOTIFY_RESULT_PENDING_REVIEW,
         NOTIFY_TASK_AMENDED,
         NOTIFY_TASK_REVISED,
+        NOTIFY_TASK_AT_RISK,
+        NOTIFY_HANDOFF_PROPOSED,
+        NOTIFY_HANDOFF_DECIDED,
         NOTIFY_ASSISTANCE_RESOLVED,
         NOTIFY_COMPOUND_TURN,
     }
@@ -179,6 +185,16 @@ class CoordinationService:
         "ARTIFACT_SUBMITTED",
         "REWORK_RESPONSE",
     }
+    #: Quick signals that are worth interrupting somebody for. The other three
+    #: describe the expected path; a notification per heartbeat is how a bell
+    #: becomes background noise.
+    ESCALATING_SIGNAL_TYPES = {"AT_RISK", "BLOCKED", "WAITING_INPUT"}
+    ESCALATING_SIGNAL_TITLES = {
+        "AT_RISK": " 说这条可能会晚",
+        "BLOCKED": " 说这条卡住了",
+        "WAITING_INPUT": " 在等别人的输入",
+    }
+
     QUICK_SIGNAL_TYPES = {
         "ON_TRACK",
         "AT_RISK",
@@ -4158,6 +4174,63 @@ class CoordinationService:
                 valid_until=valid_until,
                 note=note,
             )
+            # A warning nobody receives is a label, not a warning. These two
+            # signals were recorded and shown on the card, which means only
+            # somebody already looking at the task ever saw them -- and the
+            # person who can do something about it is the coordinator, who
+            # works on a different page. The other three quick signals stay
+            # silent on purpose: "on track" and "ready to submit" are the
+            # expected path, and a notification per heartbeat trains people to
+            # ignore the bell.
+            if signal_type in self.ESCALATING_SIGNAL_TYPES:
+                reporter = cursor.execute(
+                    "SELECT display_name FROM actors WHERE actor_id = ?",
+                    (actor_id,),
+                ).fetchone()
+                audience = [
+                    row["actor_id"]
+                    for row in cursor.execute(
+                        "SELECT actor_id FROM episode_participants "
+                        "WHERE episode_id = ? AND role IN "
+                        "('COORDINATOR', 'AGGREGATOR')",
+                        (self.episode_id,),
+                    ).fetchall()
+                ]
+                self._notify(
+                    cursor,
+                    effect_type=NOTIFY_TASK_AT_RISK,
+                    recipient_actor_ids=[
+                        actor for actor in audience if actor != actor_id
+                    ],
+                    action_item_id=action_item_id,
+                    title=(
+                        f'{reporter["display_name"]}'
+                        f"{self.ESCALATING_SIGNAL_TITLES[signal_type]}"
+                    ),
+                    summary=action["title"],
+                    fields=[
+                        {
+                            "label": "说明",
+                            "value": note or "没有留下说明",
+                        },
+                        {
+                            "label": "团队要求交付",
+                            "value": str(
+                                action["team_required_by_sim_time"] or "未设定"
+                            )[:10],
+                        },
+                    ],
+                    correlation_id=correlation_id,
+                    sim_time=sim_time,
+                    # Keyed on the note as well as the signal, so re-flagging
+                    # with new information gets through while pressing the same
+                    # button twice does not.
+                    trigger_key=(
+                        f"at-risk:{action_item_id}:{signal_type}:"
+                        f"{stable_hash([note])[:12]}"
+                    ),
+                    deep_link_path="/manage",
+                )
             result = {
                 "action_item_id": action_item_id,
                 "status": action["status"],
@@ -4166,6 +4239,481 @@ class CoordinationService:
                 "valid_until": signal_valid_until,
                 "note": note,
                 "contributor_role": contributor_role,
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
+
+    #: A task may be handed on while it is being worked, not while people are
+    #: still deciding whether to take it -- during PENDING_ASSIGNMENT the right
+    #: move is to return it, which supersedes the whole dispatch and lets the
+    #: coordinator choose again.
+    HANDOFF_STATUSES = frozenset(
+        {ActionItemStatus.TRACKING, ActionItemStatus.BLOCKED}
+    )
+
+    def propose_handoff(
+        self,
+        action_item_id: str,
+        *,
+        actor_id: str,
+        to_actor_id: str,
+        reason: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        """Offer your part of a task to somebody else on the roster.
+
+        The system already knew people need this: `不该由我负责，请重新指派`
+        is one of the three preset reasons for returning a dispatch. But
+        returning supersedes the *whole* dispatch -- everybody else's
+        acceptance included -- and sends the task back to the coordinator with
+        the thread broken. That is a heavy instrument for "this one is not
+        mine".
+
+        The load-bearing rule is that proposing does not transfer anything.
+        Until the other person accepts, the original holder still owes the
+        work: a commitment you can put down by naming somebody else is not a
+        commitment. So this creates a proposal, notifies the receiver, tells
+        the coordinator it happened, and changes no assignment at all.
+
+        The coordinator is told rather than asked. They chose this person, so
+        they should know it moved; but making them approve every handoff turns
+        a two-person adjustment into a queue, and they can always re-dispatch
+        if they disagree.
+        """
+
+        late = self._ignore_if_archived(
+            message_id=message_id, aggregate_id=action_item_id
+        )
+        if late:
+            return late
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError("a handoff needs a reason")
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+
+        with self.db.transaction() as cursor:
+            action = cursor.execute(
+                "SELECT * FROM action_items WHERE action_item_id = ? "
+                "AND episode_id = ?",
+                (action_item_id, self.episode_id),
+            ).fetchone()
+            if not action:
+                raise KeyError(action_item_id)
+            if action["status"] not in self.HANDOFF_STATUSES:
+                raise ValueError("only a task being worked on may be handed off")
+            definition_version = int(action["definition_version"] or 1)
+
+            mine = cursor.execute(
+                "SELECT * FROM action_item_assignments WHERE action_item_id = ? "
+                "AND definition_version = ? AND actor_id = ? "
+                "AND response_status = 'ACCEPTED'",
+                (action_item_id, definition_version, actor_id),
+            ).fetchone()
+            if not mine:
+                raise PermissionError(
+                    "only somebody who accepted this task may hand it on"
+                )
+            if to_actor_id == actor_id:
+                raise ValueError("a task cannot be handed to its current holder")
+            on_roster = cursor.execute(
+                "SELECT 1 AS ok FROM episode_participants "
+                "WHERE episode_id = ? AND actor_id = ?",
+                (self.episode_id, to_actor_id),
+            ).fetchone()
+            if not on_roster:
+                # The roster is the authorization boundary; a handoff that
+                # could enrol somebody would make it self-service.
+                raise ValueError("that person is not in this meeting")
+            already = cursor.execute(
+                "SELECT 1 AS ok FROM action_item_assignments "
+                "WHERE action_item_id = ? AND definition_version = ? "
+                "AND actor_id = ? AND response_status IN ('PENDING','ACCEPTED')",
+                (action_item_id, definition_version, to_actor_id),
+            ).fetchone()
+            if already:
+                raise ValueError("that person is already on this task")
+            open_handoff = cursor.execute(
+                "SELECT 1 AS ok FROM assignment_handoffs WHERE action_item_id = ? "
+                "AND from_actor_id = ? AND status = 'PENDING'",
+                (action_item_id, actor_id),
+            ).fetchone()
+            if open_handoff:
+                raise ValueError("you already have a handoff waiting on an answer")
+
+            handoff_id = f"hoff_{uuid4().hex[:20]}"
+            cursor.execute(
+                "INSERT INTO assignment_handoffs("
+                "handoff_id, action_item_id, definition_version, from_actor_id, "
+                "to_actor_id, assignment_role, reason, status, source_message_id, "
+                "proposed_sim_time"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)",
+                (
+                    handoff_id,
+                    action_item_id,
+                    definition_version,
+                    actor_id,
+                    to_actor_id,
+                    mine["assignment_role"],
+                    reason,
+                    message_id,
+                    sim_time,
+                ),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItemAssignment",
+                aggregate_id=mine["assignment_id"],
+                event_type="AssignmentHandoffProposed",
+                sim_time=sim_time,
+                payload={
+                    "action_item_id": action_item_id,
+                    "handoff_id": handoff_id,
+                    "from_actor_id": actor_id,
+                    "to_actor_id": to_actor_id,
+                    "assignment_role": mine["assignment_role"],
+                    "reason": reason,
+                },
+                correlation_id=correlation_id,
+            )
+            proposer = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+            role_label = (
+                "负责人" if mine["assignment_role"] == "OWNER" else "协作者"
+            )
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_HANDOFF_PROPOSED,
+                recipient_actor_ids=[to_actor_id],
+                action_item_id=action_item_id,
+                title=f'{proposer["display_name"]} 想把这条任务转给你',
+                summary=action["title"],
+                fields=[
+                    {"label": "原因", "value": reason},
+                    {"label": "转的是", "value": role_label},
+                    {
+                        "label": "团队要求交付",
+                        "value": str(
+                            action["team_required_by_sim_time"] or "未设定"
+                        )[:10],
+                    },
+                ],
+                decisions=[
+                    {
+                        "decision": "HANDOFF_ACCEPT",
+                        "label": "接手",
+                        "subject_id": handoff_id,
+                    },
+                    {
+                        "decision": "HANDOFF_DECLINE",
+                        "label": "不接",
+                        "subject_id": handoff_id,
+                    },
+                ],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                trigger_key=f"handoff:{handoff_id}",
+                subject_id=handoff_id,
+            )
+            # Told, not asked. They chose this person, so they should know it
+            # moved; making them approve turns a two-person adjustment into a
+            # queue, and they can re-dispatch if they disagree.
+            receiver = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (to_actor_id,)
+            ).fetchone()
+            coordinators = [
+                row["actor_id"]
+                for row in cursor.execute(
+                    "SELECT actor_id FROM episode_participants "
+                    "WHERE episode_id = ? AND role IN ('COORDINATOR','AGGREGATOR')",
+                    (self.episode_id,),
+                ).fetchall()
+            ]
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_HANDOFF_PROPOSED,
+                recipient_actor_ids=[
+                    one for one in coordinators if one not in (actor_id, to_actor_id)
+                ],
+                action_item_id=action_item_id,
+                title=(
+                    f'{proposer["display_name"]} 想把任务转给 '
+                    f'{receiver["display_name"]}'
+                ),
+                summary=action["title"],
+                fields=[
+                    {"label": "原因", "value": reason},
+                    {
+                        "label": "现在的状态",
+                        "value": "对方接受前，责任还在原来的人身上",
+                    },
+                ],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                trigger_key=f"handoff-fyi:{handoff_id}",
+            )
+            result = {
+                "handoff_id": handoff_id,
+                "action_item_id": action_item_id,
+                "to_actor_id": to_actor_id,
+                "status": "PENDING",
+                "still_owed_by": actor_id,
+            }
+            self._record_inbound(
+                cursor, message_id=message_id, result=result, sim_time=sim_time
+            )
+        return result
+
+    def respond_to_handoff(
+        self,
+        handoff_id: str,
+        *,
+        actor_id: str,
+        accept: bool,
+        response_message: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        """Take the task on, or say no.
+
+        Accepting moves the assignment in one transaction: the previous
+        holder's row is superseded, a new one is written already ACCEPTED --
+        agreeing to the handoff *is* the acceptance, and asking twice would be
+        theatre -- and, for an owner handoff, `owner_actor_id` moves with it.
+
+        Declining changes nothing and says so. The proposer is told either way,
+        because the interesting case is the one where they assumed it was dealt
+        with.
+        """
+
+        existing = self.db.one(
+            "SELECT processed_result FROM inbound_receipts WHERE message_id = ?",
+            (message_id,),
+        )
+        if existing:
+            return json.loads(existing["processed_result"])
+
+        sim_time = self.now()
+        correlation_id = f"corr_{message_id}"
+
+        with self.db.transaction() as cursor:
+            handoff = cursor.execute(
+                "SELECT * FROM assignment_handoffs WHERE handoff_id = ?",
+                (handoff_id,),
+            ).fetchone()
+            if not handoff:
+                raise KeyError(handoff_id)
+            if handoff["to_actor_id"] != actor_id:
+                raise PermissionError(
+                    "only the person a task was offered to may answer"
+                )
+            if handoff["status"] != "PENDING":
+                raise ValueError("this handoff has already been answered")
+
+            action = cursor.execute(
+                "SELECT * FROM action_items WHERE action_item_id = ?",
+                (handoff["action_item_id"],),
+            ).fetchone()
+            definition_version = int(action["definition_version"] or 1)
+            if definition_version != int(handoff["definition_version"]):
+                # The task was re-dispatched under the proposer's feet, so the
+                # thing being offered no longer exists in the form it was
+                # offered in.
+                cursor.execute(
+                    "UPDATE assignment_handoffs SET status = 'CANCELLED', "
+                    "decided_sim_time = ? WHERE handoff_id = ?",
+                    (sim_time, handoff_id),
+                )
+                raise ValueError("this task was re-dispatched; the handoff lapsed")
+
+            if accept:
+                cursor.execute(
+                    "UPDATE action_item_assignments SET response_status = "
+                    "'SUPERSEDED', responded_sim_time = ? "
+                    "WHERE action_item_id = ? AND definition_version = ? "
+                    "AND actor_id = ? AND response_status = 'ACCEPTED'",
+                    (
+                        sim_time,
+                        handoff["action_item_id"],
+                        definition_version,
+                        handoff["from_actor_id"],
+                    ),
+                )
+                giver = cursor.execute(
+                    "SELECT display_name FROM actors WHERE actor_id = ?",
+                    (handoff["from_actor_id"],),
+                ).fetchone()
+                note = f'由 {giver["display_name"]} 转交'
+                # One row per (task, version, actor) is a UNIQUE constraint, and
+                # the receiver may already have one from an earlier round of
+                # this same dispatch -- returned, or superseded by a previous
+                # handoff. Reviving that row is the same fact as inserting a
+                # new one, and the insert would simply fail.
+                revived = cursor.execute(
+                    "UPDATE action_item_assignments SET response_status = "
+                    "'ACCEPTED', assignment_role = ?, assignment_message = ?, "
+                    "response_message = ?, responded_sim_time = ?, "
+                    "source_message_id = ? "
+                    "WHERE action_item_id = ? AND definition_version = ? "
+                    "AND actor_id = ?",
+                    (
+                        handoff["assignment_role"],
+                        note,
+                        response_message or None,
+                        sim_time,
+                        message_id,
+                        handoff["action_item_id"],
+                        definition_version,
+                        actor_id,
+                    ),
+                ).rowcount
+                if not revived:
+                    cursor.execute(
+                        "INSERT INTO action_item_assignments("
+                        "assignment_id, action_item_id, definition_version, "
+                        "actor_id, assignment_role, response_status, "
+                        "assignment_message, response_message, "
+                        "assigned_sim_time, responded_sim_time, source_message_id"
+                        ") VALUES (?, ?, ?, ?, ?, 'ACCEPTED', ?, ?, ?, ?, ?)",
+                        (
+                            f"asg_{uuid4().hex[:20]}",
+                            handoff["action_item_id"],
+                            definition_version,
+                            actor_id,
+                            handoff["assignment_role"],
+                            note,
+                            response_message or None,
+                            sim_time,
+                            sim_time,
+                            message_id,
+                        ),
+                    )
+                if handoff["assignment_role"] == "OWNER":
+                    cursor.execute(
+                        "UPDATE action_items SET owner_actor_id = ?, "
+                        "version = version + 1 WHERE action_item_id = ?",
+                        (actor_id, handoff["action_item_id"]),
+                    )
+                    metadata = self.proposal_metadata(action)
+                    collaborators = [
+                        one
+                        for one in metadata.get("collaborator_actor_ids", [])
+                        if one != actor_id
+                    ]
+                    metadata["collaborator_actor_ids"] = collaborators
+                    cursor.execute(
+                        "UPDATE action_items SET proposal_metadata = ? "
+                        "WHERE action_item_id = ?",
+                        (canonical_json(metadata), handoff["action_item_id"]),
+                    )
+                else:
+                    metadata = self.proposal_metadata(action)
+                    collaborators = [
+                        one
+                        for one in metadata.get("collaborator_actor_ids", [])
+                        if one != handoff["from_actor_id"]
+                    ]
+                    if actor_id not in collaborators:
+                        collaborators.append(actor_id)
+                    metadata["collaborator_actor_ids"] = collaborators
+                    cursor.execute(
+                        "UPDATE action_items SET proposal_metadata = ?, "
+                        "version = version + 1 WHERE action_item_id = ?",
+                        (canonical_json(metadata), handoff["action_item_id"]),
+                    )
+
+            cursor.execute(
+                "UPDATE assignment_handoffs SET status = ?, response_message = ?, "
+                "decided_sim_time = ? WHERE handoff_id = ?",
+                (
+                    "ACCEPTED" if accept else "DECLINED",
+                    response_message or None,
+                    sim_time,
+                    handoff_id,
+                ),
+            )
+            self.db.append_audit(
+                cursor,
+                run_id=self.run_id,
+                aggregate_type="ActionItemAssignment",
+                aggregate_id=handoff_id,
+                event_type=(
+                    "AssignmentHandoffAccepted"
+                    if accept
+                    else "AssignmentHandoffDeclined"
+                ),
+                sim_time=sim_time,
+                payload={
+                    "action_item_id": handoff["action_item_id"],
+                    "handoff_id": handoff_id,
+                    "from_actor_id": handoff["from_actor_id"],
+                    "to_actor_id": actor_id,
+                    "assignment_role": handoff["assignment_role"],
+                    "response_message": response_message,
+                },
+                correlation_id=correlation_id,
+            )
+            answerer = cursor.execute(
+                "SELECT display_name FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+            coordinators = [
+                row["actor_id"]
+                for row in cursor.execute(
+                    "SELECT actor_id FROM episode_participants "
+                    "WHERE episode_id = ? AND role IN ('COORDINATOR','AGGREGATOR')",
+                    (self.episode_id,),
+                ).fetchall()
+            ]
+            audience = [handoff["from_actor_id"], *coordinators]
+            self._notify(
+                cursor,
+                effect_type=NOTIFY_HANDOFF_DECIDED,
+                recipient_actor_ids=[
+                    one for one in dict.fromkeys(audience) if one != actor_id
+                ],
+                action_item_id=handoff["action_item_id"],
+                title=(
+                    f'{answerer["display_name"]} '
+                    + ("接手了这条任务" if accept else "没有接这条任务")
+                ),
+                summary=action["title"],
+                fields=[
+                    {
+                        "label": "回复",
+                        "value": response_message or "没有留下说明",
+                    },
+                    {
+                        "label": "现在归谁",
+                        "value": (
+                            answerer["display_name"]
+                            if accept
+                            else "还在原来的人手上"
+                        ),
+                    },
+                ],
+                correlation_id=correlation_id,
+                sim_time=sim_time,
+                trigger_key=f"handoff-decided:{handoff_id}",
+            )
+            result = {
+                "handoff_id": handoff_id,
+                "action_item_id": handoff["action_item_id"],
+                "status": "ACCEPTED" if accept else "DECLINED",
+                "owner_actor_id": (
+                    actor_id
+                    if accept and handoff["assignment_role"] == "OWNER"
+                    else action["owner_actor_id"]
+                ),
             }
             self._record_inbound(
                 cursor, message_id=message_id, result=result, sim_time=sim_time

@@ -156,6 +156,36 @@ USER_MESSAGES: dict[str, str] = {
     'that person already answered': (
         '这个人已经交了'
     ),
+    'a handoff needs a reason': (
+        '转交要写原因'
+    ),
+    'only a task being worked on may be handed off': (
+        '只有正在执行的任务可以转交'
+    ),
+    'only somebody who accepted this task may hand it on': (
+        '只有接受过这条任务的人可以把它转出去'
+    ),
+    'a task cannot be handed to its current holder': (
+        '不能转给正拿着它的人'
+    ),
+    'that person is not in this meeting': (
+        '这个人不在这场会的名单里'
+    ),
+    'that person is already on this task': (
+        '这个人已经在这条任务上了'
+    ),
+    'you already have a handoff waiting on an answer': (
+        '你已经有一个转交在等回复了'
+    ),
+    'only the person a task was offered to may answer': (
+        '只有被转交的人可以回复'
+    ),
+    'this handoff has already been answered': (
+        '这个转交已经回复过了'
+    ),
+    'this task was re-dispatched; the handoff lapsed': (
+        '这条任务被重新派发了，这次转交已失效'
+    ),
     'message_id is required': (
         'message_id 为必填项'
     ),

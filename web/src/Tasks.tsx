@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getJson } from "./api";
+import { getJson, messageId, postJson } from "./api";
 import type { ManageState, Task } from "./manage-types";
 import { formatDay } from "./manage/schedule";
 import { TaskCard } from "./manage/TaskCard";
@@ -171,6 +171,14 @@ export default function TasksPage() {
         </p>
       ) : null}
 
+      {(state.pending_handoffs ?? []).length ? (
+        <div className="mb-4 grid gap-2">
+          {(state.pending_handoffs ?? []).map((handoff) => (
+            <HandoffOffer key={handoff.handoff_id} handoff={handoff} act={act} />
+          ))}
+        </div>
+      ) : null}
+
       <Zone
         n={zoneNumber("live")}
         name="进行中"
@@ -292,5 +300,72 @@ function involvesMe(task: Task, me: string): boolean {
     task.owner_actor_id === me ||
     Boolean(task.is_collaborator) ||
     inputs.some((input) => input.actor_id === me)
+  );
+}
+
+/** A task somebody is offering you.
+ *
+ *  Sits above the task list rather than inside it, because it is not yet one
+ *  of your tasks -- and it says whose it still is, so declining does not feel
+ *  like abandoning something already on your plate.
+ */
+function HandoffOffer({
+  handoff,
+  act,
+}: {
+  handoff: NonNullable<ManageState["pending_handoffs"]>[number];
+  act: Act;
+}) {
+  const [note, setNote] = useState("");
+  const answer = (accept: boolean) => {
+    // Two whole paths rather than one with the verb interpolated. The check
+    // that every path a page calls exists on the server reads these literals,
+    // and it cannot tell an interpolated verb from an interpolated id.
+    const path = accept
+      ? `/api/handoffs/${handoff.handoff_id}/accept`
+      : `/api/handoffs/${handoff.handoff_id}/decline`;
+    void act(
+      () =>
+        postJson(path, {
+          response_message: note,
+          message_id: messageId("handoff-answer"),
+        }),
+      accept ? "接手了，这条现在算你的" : "已回复，这条还在原来的人手上",
+    );
+  };
+
+  return (
+    <article className="rounded-md border border-accent bg-accent-wash px-3.5 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <b className="text-[0.9rem]">
+          {handoff.from_display_name} 想把这条转给你
+        </b>
+        <span className="rounded-full bg-raise px-2 py-px font-mono text-[0.7rem] text-ink-3">
+          转的是{handoff.assignment_role === "OWNER" ? "负责人" : "协作者"}
+        </span>
+      </div>
+      <p className="mt-1 text-[0.85rem] font-medium">{handoff.title}</p>
+      <p className="mt-1 text-[0.82rem] text-ink-2">原因：{handoff.reason}</p>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="回复一句（可选）"
+          className="min-w-[12rem] flex-1 rounded border border-rule bg-raise px-2 py-1 text-[0.8rem]"
+        />
+        <button
+          onClick={() => answer(true)}
+          className="rounded bg-ink px-3 py-1 text-[0.8rem] text-paper"
+        >
+          接手
+        </button>
+        <button
+          onClick={() => answer(false)}
+          className="rounded border border-rule px-3 py-1 text-[0.8rem] text-ink-2 hover:bg-ground"
+        >
+          不接
+        </button>
+      </div>
+    </article>
   );
 }

@@ -1178,6 +1178,36 @@ def workbench_state(
             run_id=service.run_id,
         ),
         "aggregator_actor_id": service.aggregator_actor_id,
+        # Handoffs waiting on the reader. The bell shows only notices that
+        # ask nothing (`decides` is filtered out there) and the task cards read
+        # assignments -- a handoff is neither, so without this it has nowhere
+        # on the page to appear and the receiver never learns it exists.
+        "pending_handoffs": (
+            [
+                {
+                    "handoff_id": row["handoff_id"],
+                    "action_item_id": row["action_item_id"],
+                    "from_display_name": row["from_display_name"],
+                    "assignment_role": row["assignment_role"],
+                    "reason": row["reason"],
+                    "title": row["title"],
+                    "team_required_by_sim_time": row["team_required_by_sim_time"],
+                }
+                for row in db.all(
+                    "SELECT h.handoff_id, h.action_item_id, h.assignment_role, "
+                    "h.reason, a.display_name AS from_display_name, "
+                    "i.title, i.team_required_by_sim_time "
+                    "FROM assignment_handoffs h "
+                    "JOIN actors a ON a.actor_id = h.from_actor_id "
+                    "JOIN action_items i ON i.action_item_id = h.action_item_id "
+                    "WHERE h.status = 'PENDING' AND h.to_actor_id = ? "
+                    "AND i.episode_id = ? ORDER BY h.proposed_sim_time",
+                    (principal.actor_id, episode["episode_id"]),
+                )
+            ]
+            if principal
+            else []
+        ),
         "participants": list(participants_by_id.values()),
         "memories": memories,
         "memory_lexicon": memory_lexicon_payload(),
@@ -1664,7 +1694,7 @@ def build_console_server(
 
     approval_path = re.compile(r"^/api/approvals/([^/]+)$")
     action_path = re.compile(
-        r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote)$"
+        r"^/api/action-items/([^/]+)/(revise|amend|dispatch|assignment-response|ignore|merge|signal|assistance|personal-commitment|submit|ballot-draft|ballot|vote|handoff)$"
     )
     review_hint_path = re.compile(r"^/api/review-hints/([^/]+)/materialize$")
     collaboration_structure_path = re.compile(
@@ -1676,6 +1706,7 @@ def build_console_server(
     assistance_path = re.compile(
         r"^/api/assistance/([^/]+)/(acknowledge|resolve|cancel)$"
     )
+    handoff_path = re.compile(r"^/api/handoffs/([^/]+)/(accept|decline)$")
     final_generate_path = re.compile(r"^/api/final/generate$")
     action_add_path = re.compile(r"^/api/action-items$")
     memory_declare_path = re.compile(r"^/api/memories/declare$")
@@ -2028,6 +2059,7 @@ def build_console_server(
                 parsed.path
             )
             assistance_match = assistance_path.match(parsed.path)
+            handoff_match = handoff_path.match(parsed.path)
             memory_match = memory_path.match(parsed.path)
             memory_declare_match = memory_declare_path.match(parsed.path)
             structure_revoke_match = collaboration_structure_revoke_path.match(
@@ -2049,6 +2081,7 @@ def build_console_server(
                 and not collaboration_structure_match
                 and not structure_revoke_match
                 and not assistance_match
+                and not handoff_match
                 and not memory_match
                 and not memory_declare_match
                 and not artifact_match
@@ -2236,6 +2269,21 @@ def build_console_server(
                         actor_id=principal.actor_id,
                         message_id=payload.get("message_id", ""),
                     )
+                elif handoff_match:
+                    # Only the person it was offered to may answer, which the
+                    # service checks against the handoff row -- there is no
+                    # episode-level role that grants it.
+                    authorization.require_participant(principal)
+                    handoff_id, decision = handoff_match.groups()
+                    result = service.respond_to_handoff(
+                        handoff_id,
+                        actor_id=principal.actor_id,
+                        accept=decision == "accept",
+                        response_message=payload.get("response_message", ""),
+                        message_id=self._message_id(payload),
+                    )
+                    self._json(200, result)
+                    return
                 elif assistance_match:
                     authorization.require_episode(principal)
                     assistance_id, assistance_action = assistance_match.groups()
@@ -2374,6 +2422,19 @@ def build_console_server(
                                 "target_action_item_id", ""
                             ),
                             actor_id=principal.actor_id,
+                            message_id=message_id,
+                        )
+                    elif operation == "handoff":
+                        # Not require_coordinator: handing on your own part is
+                        # a move by whoever is holding it.
+                        authorization.require_action_contributor(
+                            principal, action_id
+                        )
+                        result = service.propose_handoff(
+                            action_id,
+                            actor_id=principal.actor_id,
+                            to_actor_id=payload.get("to_actor_id", ""),
+                            reason=payload.get("reason", ""),
                             message_id=message_id,
                         )
                     elif operation == "signal":

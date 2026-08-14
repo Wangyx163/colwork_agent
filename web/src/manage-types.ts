@@ -345,6 +345,16 @@ export interface ManageState {
   compound_tasks?: CompoundTask[];
   notices: Notice[];
   pending_approvals: Approval[];
+  /** Handoffs offered to the reader and not yet answered. */
+  pending_handoffs?: {
+    handoff_id: string;
+    action_item_id: string;
+    from_display_name: string;
+    assignment_role: string;
+    reason: string;
+    title: string;
+    team_required_by_sim_time: string | null;
+  }[];
   /** Null until an episode has produced one -- a meeting still in flight has
    *  no final deliverable, and typing it non-null hides that from the caller. */
   final: FinalDeliverable | null;

@@ -42,7 +42,7 @@ const HELP_LABEL: Record<string, string> = {
   OTHER: "其它",
 };
 
-type Panel = "" | "return" | "commit" | "help" | "submit" | "amend";
+type Panel = "" | "return" | "commit" | "help" | "submit" | "amend" | "handoff";
 
 export function MyTaskCard({
   task,
@@ -125,6 +125,18 @@ export function MyTaskCard({
                 label: "改任务说明",
                 tone: "ghost" as const,
                 run: () => toggle("amend"),
+              },
+            ]
+          : []),
+        // Offered to collaborators as well: handing on your own part is not
+        // the owner's exclusive move, and the domain checks that you accepted
+        // this task rather than that you own it.
+        ...(task.can_contribute && task.status === "TRACKING"
+          ? [
+              {
+                label: "转给别人",
+                tone: "ghost" as const,
+                run: () => toggle("handoff"),
               },
             ]
           : []),
@@ -219,6 +231,26 @@ export function MyTaskCard({
                   },
                   "承诺时间已更新",
                 )
+              }
+            />
+          ) : null}
+
+          {panel === "handoff" ? (
+            <HandoffPanel
+              state={state}
+              onCancel={() => setPanel("")}
+              onSend={(target, reason) =>
+                void act(async () => {
+                  await postJson(
+                    `/api/action-items/${task.action_item_id}/handoff`,
+                    {
+                      to_actor_id: target,
+                      reason,
+                      message_id: messageId("handoff"),
+                    },
+                  );
+                  setPanel("");
+                }, "已发出。对方接受之前，这条还算你的")
               }
             />
           ) : null}
@@ -733,5 +765,72 @@ function AmendPanel({
         </Button>
       </div>
     </Frame>
+  );
+}
+
+/** Offering your part of a task to somebody else.
+ *
+ *  The copy says the thing that makes this a handoff rather than a dodge: the
+ *  work is still yours until they say yes. Without that sentence people read
+ *  the button as "get rid of it" and stop tracking it the moment they click.
+ */
+function HandoffPanel({
+  state,
+  onCancel,
+  onSend,
+}: {
+  state: ManageState;
+  onCancel: () => void;
+  onSend: (target: string, reason: string) => void;
+}) {
+  const [target, setTarget] = useState("");
+  const [reason, setReason] = useState("");
+  const me = state.principal.actor_id;
+  const people = (state.participants ?? []).filter(
+    (person) => person.actor_id !== me,
+  );
+
+  return (
+    <div className="mt-3 grid gap-2 rounded border border-rule-2 bg-ground p-3">
+      <p className="text-[0.79rem] leading-relaxed text-ink-3">
+        对方接受之前，这条任务还算在你身上——转交是一次提议，不是放下。
+        会议负责人会收到知会。
+      </p>
+      <label className="grid gap-1 text-[0.79rem]">
+        转给谁
+        <select
+          value={target}
+          onChange={(event) => setTarget(event.target.value)}
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        >
+          <option value="">选一个人</option>
+          {people.map((person) => (
+            <option key={person.actor_id} value={person.actor_id}>
+              {person.display_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="grid gap-1 text-[0.79rem]">
+        为什么转（必填）
+        <input
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="例：这块要用到他手上的数据"
+          className="rounded border border-rule bg-raise px-2 py-1 text-[0.82rem]"
+        />
+      </label>
+      <div className="flex gap-2">
+        <Button
+          disabled={!target || !reason.trim()}
+          onClick={() => onSend(target, reason)}
+        >
+          发出转交
+        </Button>
+        <Button tone="ghost" onClick={onCancel}>
+          取消
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -40,3 +40,6 @@ datasets/
 # regenerate a run with `eval-extraction --alimeeting4mug` when you need the
 # predictions themselves for offline re-scoring.
 evaluation_runs/
+
+# Gold harvested from real meetings: real colleagues' words, and this repo is public.
+fixtures/harvested/

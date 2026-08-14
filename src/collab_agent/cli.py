@@ -148,6 +148,27 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
 
+    gold = subparsers.add_parser(
+        "harvest-gold",
+        help=(
+            "turn coordinator review decisions into item-level gold. The "
+            "public corpus labels sentences, so item detection has been null "
+            "in every report; a coordinator keeping, ignoring and hand-adding "
+            "candidates is already labelling them"
+        ),
+    )
+    gold.add_argument("--db", default="var/meeting.sqlite3")
+    gold.add_argument(
+        "--postgres",
+        action="store_true",
+        help="use DATABASE_URL from .env.local instead of SQLite",
+    )
+    gold.add_argument(
+        "--out",
+        default="fixtures/harvested",
+        help="directory to write one gold file per meeting into",
+    )
+
     console = subparsers.add_parser(
         "serve-console",
         help="serve every meeting registered in this database from one port",
@@ -1405,6 +1426,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             pass
         finally:
             stop.set()
+            database.close()
+        return 0
+    if args.command == "harvest-gold":
+        import json as _json
+
+        from . import episode_registry, gold_harvest
+
+        database = _open_database(args)
+        try:
+            payloads = []
+            for source in episode_registry.list_sources(database):
+                payload = gold_harvest.write_gold(
+                    database,
+                    episode_id=source.episode_id,
+                    run_id="",
+                    destination=Path(args.out) / f"{source.slug}.json",
+                )
+                payloads.append(payload)
+                print(
+                    f"{source.slug:<16} 保留 {payload['counts']['kept']} "
+                    f"否决 {payload['counts']['ignored']} "
+                    f"补录 {payload['counts']['added']}"
+                )
+            if not payloads:
+                print("这个库里没有注册过的会议。")
+                return 1
+            print()
+            print(
+                _json.dumps(
+                    gold_harvest.combine(payloads), ensure_ascii=False, indent=2
+                )
+            )
+        finally:
             database.close()
         return 0
     if args.command == "serve-console":

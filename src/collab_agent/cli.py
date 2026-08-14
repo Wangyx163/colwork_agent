@@ -119,6 +119,25 @@ def _parser() -> argparse.ArgumentParser:
     )
     meeting.add_argument("--dispatch-seconds", type=float, default=2.0)
     meeting.add_argument(
+        "--remind-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "how often to advance the meeting clock and act on what is due; "
+            "0 leaves time standing still, which is what it did before"
+        ),
+    )
+    meeting.add_argument(
+        "--remind-only",
+        default="",
+        help=(
+            "send every Feishu card to this person instead of its real "
+            "recipient. For turning reminders on against a live team without "
+            "reminding four colleagues; the audit trail still records who each "
+            "message was for"
+        ),
+    )
+    meeting.add_argument(
         "--intake-mode",
         choices=("cache", "live"),
         default="cache",
@@ -160,6 +179,25 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     console.add_argument("--dispatch-seconds", type=float, default=2.0)
+    console.add_argument(
+        "--remind-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "how often to advance the meeting clock and act on what is due; "
+            "0 leaves time standing still, which is what it did before"
+        ),
+    )
+    console.add_argument(
+        "--remind-only",
+        default="",
+        help=(
+            "send every Feishu card to this person instead of its real "
+            "recipient. For turning reminders on against a live team without "
+            "reminding four colleagues; the audit trail still records who each "
+            "message was for"
+        ),
+    )
     console.add_argument(
         "--intake-mode",
         choices=("cache", "live"),
@@ -765,7 +803,9 @@ def _resolve_actor(database: Database, actor: str) -> str:
     return dict(row)["actor_id"] if row else actor
 
 
-def _build_feishu_im(database: object, *, dry_run: bool):
+def _build_feishu_im(
+    database: object, *, dry_run: bool, redirect_to_open_id: str = ""
+):
     from .feishu_config import load_feishu_config
     from .feishu_im import FeishuIM, LarkTransport, RecordingTransport
 
@@ -777,7 +817,39 @@ def _build_feishu_im(database: object, *, dry_run: bool):
     else:
         config = load_feishu_config()
         transport = LarkTransport(config)
-    return config, FeishuIM(database, transport)
+    return config, FeishuIM(
+        database,
+        transport,
+        redirect_all_to_open_id=redirect_to_open_id,
+        log=flushing_log_or_print,
+    )
+
+
+def flushing_log_or_print(line: str) -> None:
+    print(line, flush=True)
+
+
+def _resolve_redirect_open_id(database: object, name: str) -> str:
+    """Turn `--remind-only 王昱翔` into the open_id its cards will go to.
+
+    Refuses a name that is not bound rather than silently sending nothing: the
+    whole point of the flag is to know where the messages went.
+    """
+
+    name = (name or "").strip()
+    if not name:
+        return ""
+    row = database.one(  # type: ignore[attr-defined]
+        "SELECT b.open_id FROM feishu_identity_bindings b "
+        "JOIN actors a ON a.actor_id = b.actor_id WHERE a.display_name = ?",
+        (name,),
+    )
+    if not row:
+        raise SystemExit(
+            f"--remind-only 指定的「{name}」没有绑定飞书，"
+            "所有通知会无处可去。先让他 @ 一下机器人完成注册。"
+        )
+    return row["open_id"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1214,7 +1286,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             bootstrap.initialize()
             bootstrap.close()
             database = ThreadLocalDatabase(factory)
-            config, im = _build_feishu_im(database, dry_run=False)
+            config, im = _build_feishu_im(
+                database,
+                dry_run=False,
+                redirect_to_open_id=_resolve_redirect_open_id(
+                    database, args.remind_only
+                ),
+            )
             service = load_meeting_service(
                 database,
                 extraction_path=args.extraction,
@@ -1284,6 +1362,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             threading.Thread(
                 target=process_loop, name="result-processing", daemon=True
             ).start()
+
+        if getattr(args, "remind_seconds", 0):
+            from .scheduler import Scheduler, run_forever
+
+            schedulers = [
+                Scheduler(one, log=lambda line: print(line, flush=True))
+                for one in ([service])
+            ]
+            if args.remind_only:
+                print(
+                    f"催办已开启，但所有卡片只发给「{args.remind_only}」"
+                    "——审计记录仍然记着每条本来该发给谁。",
+                    flush=True,
+                )
+            threading.Thread(
+                target=lambda: run_forever(
+                    schedulers,
+                    stop=stop,
+                    interval_seconds=args.remind_seconds,
+                    log=lambda line: print(line, flush=True),
+                ),
+                name="scheduler",
+                daemon=True,
+            ).start()
+
         print(
             f"Meeting collaboration workbench: http://{args.host}:{args.port} "
             f"({service.episode_id})"
@@ -1329,7 +1432,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         config, im = (None, None)
         if args.feishu:
-            config, im = _build_feishu_im(database, dry_run=False)
+            config, im = _build_feishu_im(
+                database,
+                dry_run=False,
+                redirect_to_open_id=_resolve_redirect_open_id(
+                    database, args.remind_only
+                ),
+            )
 
         consoles = []
         services = []
@@ -1415,6 +1524,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     name=f"processing-{service.episode_id[-8:]}",
                     daemon=True,
                 ).start()
+
+
+        if getattr(args, "remind_seconds", 0):
+            from .scheduler import Scheduler, run_forever
+
+            schedulers = [
+                Scheduler(one, log=lambda line: print(line, flush=True))
+                for one in (services)
+            ]
+            if args.remind_only:
+                print(
+                    f"催办已开启，但所有卡片只发给「{args.remind_only}」"
+                    "——审计记录仍然记着每条本来该发给谁。",
+                    flush=True,
+                )
+            threading.Thread(
+                target=lambda: run_forever(
+                    schedulers,
+                    stop=stop,
+                    interval_seconds=args.remind_seconds,
+                    log=lambda line: print(line, flush=True),
+                ),
+                name="scheduler",
+                daemon=True,
+            ).start()
 
         print(f"会议控制台：http://{args.host}:{args.port}/")
         for console in consoles:

@@ -209,10 +209,25 @@ class FeishuIM:
         transport: FeishuTransport,
         *,
         renderer: Callable[[dict[str, Any]], tuple[str, str]] = render_command,
+        redirect_all_to_open_id: str = "",
+        log: Callable[[str], None] | None = None,
     ) -> None:
+        """`redirect_all_to_open_id` sends every card to one person instead.
+
+        For turning the scheduler on against a live team without reminding
+        four colleagues about tasks that are only overdue because a simulated
+        clock caught up. It lives here, at the delivery boundary, rather than
+        in the domain: the Outbox row and the audit trail keep saying who the
+        message was *for*, which is the truth of the record, and only the
+        envelope changes. A redirect implemented by rewriting recipients would
+        leave a permanent lie in the trail for the sake of a temporary test.
+        """
+
         self.database = database
         self.transport = transport
         self.renderer = renderer
+        self.redirect_all_to_open_id = redirect_all_to_open_id.strip()
+        self.log = log or (lambda line: None)
         self.ensure_schema()
 
     def ensure_schema(self) -> None:
@@ -265,6 +280,14 @@ class FeishuIM:
         return bool(removed)
 
     def open_id_for(self, actor_id: str) -> str:
+        if self.redirect_all_to_open_id:
+            # Said out loud every time. A redirect that is silent is a redirect
+            # somebody forgets is on, and then wonders why their team never
+            # heard anything.
+            self.log(
+                f"[feishu] 重定向：本应发给 {actor_id} 的通知发给了测试收件人"
+            )
+            return self.redirect_all_to_open_id
         row = self.database.one(
             "SELECT open_id FROM feishu_identity_bindings WHERE actor_id = ?",
             (actor_id,),

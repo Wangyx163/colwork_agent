@@ -194,8 +194,9 @@
         "verified_by": "tests/test_p0.py"
       },
       "REAL_SCHEDULER": {
-        "status": "NOT_DONE",
-        "note": "真实定时催办未做"
+        "status": "DONE",
+        "note": "催办的每一块本来都有——evaluate_policy 判逾期、advance_time 推时钟、Outbox 投递——缺的是跑它们的东西：evaluate_policy 只被评测框架调用，serving 路径里一次都没有。现在 --remind-seconds 起一个循环，把会议时钟推到墙上时间再问领域这意味着什么；它自己不发任何消息，产出全进 Outbox 走同一套 EffectId 幂等。时钟只前进不后退，按会议所在时区比较（Friday 是团队的 Friday）。--remind-only 可把所有卡片改投给一个人，重定向在投递边界，审计与 Outbox 仍记录每条本来发给谁。",
+        "verified_by": "tests/test_scheduler.py"
       }
     }
   }

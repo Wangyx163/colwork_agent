@@ -249,6 +249,120 @@ code, _ = call(
     tokens[worker],
 )
 step("再报一条进展", code == 200, str(code))
+# The moves a three-week collaboration needs, on the task that is now being
+# worked. Exercised here rather than in a section of their own because they are
+# not a stage -- they are things that happen *during* execution, and running
+# them against a task in TRACKING is the only state in which they are legal.
+code, body = call(
+    "POST",
+    f"/api/action-items/{tid}/scope",
+    {
+        "proposed_deliverable": "只做前两个部分",
+        "reason": "第三部分依赖的数据这周拿不到",
+        "message_id": "fc-scope-1",
+    },
+    tokens[worker],
+)
+step("执行人提议改范围", code == 200, f"{code} {str(body.get('message'))[:50]}")
+scope_id = (body or {}).get("request_id", "")
+
+if scope_id:
+    code, _ = call(
+        "POST",
+        f"/api/scope-changes/{scope_id}/decline",
+        {"comment": "第三部分是这次的重点", "message_id": "fc-scope-decline"},
+        lead,
+    )
+    step("负责人不同意（必须写原因）", code == 200, str(code))
+
+    code, body = call(
+        "POST",
+        f"/api/action-items/{tid}/scope",
+        {
+            "proposed_deliverable": "前两部分先交，第三部分下周补",
+            "reason": "数据方给了下周的时间",
+            "message_id": "fc-scope-2",
+        },
+        tokens[worker],
+    )
+    second_scope = (body or {}).get("request_id", "")
+    if second_scope:
+        code, body = call(
+            "POST",
+            f"/api/scope-changes/{second_scope}/accept",
+            {"comment": "行", "message_id": "fc-scope-accept"},
+            lead,
+        )
+        step("负责人同意后交付要求才变", code == 200, str(code))
+
+# Handing on a part, to somebody on the roster who is not already on the task.
+code, body = call(
+    "POST",
+    f"/api/action-items/{tid}/handoff",
+    {
+        "to_actor_id": actors[lead_name],
+        "reason": "这块要用到你手上的资料",
+        "message_id": "fc-handoff-1",
+    },
+    tokens[mate],
+)
+step("协作者提议转交", code == 200, f"{code} {str(body.get('message'))[:50]}")
+handoff_id = (body or {}).get("handoff_id", "")
+
+if handoff_id:
+    step(
+        "提议期间责任还在原来的人身上",
+        (body or {}).get("still_owed_by") == actors[mate],
+        str(body.get("still_owed_by"))[:20],
+    )
+    code, _ = call(
+        "POST",
+        f"/api/handoffs/{handoff_id}/decline",
+        {"response_message": "我这周也满了", "message_id": "fc-handoff-decline"},
+        lead,
+    )
+    step("被转交的人可以不接", code == 200, str(code))
+
+    code, body = call(
+        "POST",
+        f"/api/action-items/{tid}/handoff",
+        {
+            "to_actor_id": actors[lead_name],
+            "reason": "还是得你来",
+            "message_id": "fc-handoff-2",
+        },
+        tokens[mate],
+    )
+    second_handoff = (body or {}).get("handoff_id", "")
+    if second_handoff:
+        code, _ = call(
+            "POST",
+            f"/api/handoffs/{second_handoff}/accept",
+            {"response_message": "好", "message_id": "fc-handoff-accept"},
+            lead,
+        )
+        step("接手后分派才转移", code == 200, str(code))
+
+# A half, handed over without calling it finished.
+code, _ = call(
+    "POST",
+    f"/api/action-items/{tid}/submit",
+    {
+        "delivery": {"summary": "先给能用的一半", "content": "前两部分的结论"},
+        "interim": True,
+        "message_id": "fc-interim",
+    },
+    tokens[worker],
+)
+step("先交一部分", code == 200, str(code))
+state = call("GET", "/api/state?surface=manage", token=lead)[1]
+row = next(t for t in state["tasks"] if t["action_item_id"] == tid)
+step(
+    "部分交付不把任务推进验收",
+    row["status"] == "TRACKING",
+    row["status"],
+)
+
 code, _ = call(
     "POST",
     f"/api/action-items/{tid}/personal-commitment",

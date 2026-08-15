@@ -36,10 +36,12 @@ datasets/
 
 # Evaluation runs hold the stored predictions, whose source_quote fields are
 # verbatim corpus text -- committing them would vendor the corpus by the back
-# door. The numbers they produce live in README and colwrok_SDD/18 §14.3;
-# regenerate a run with `eval-extraction --alimeeting4mug` when you need the
-# predictions themselves for offline re-scoring.
+# door. Regenerate a run with `eval-extraction --alimeeting4mug` when you need
+# the predictions themselves for offline re-scoring.
 evaluation_runs/
 
 # Gold harvested from real meetings: real colleagues' words, and this repo is public.
 fixtures/harvested/
+
+# Local coding-agent memory. Public, tool-neutral guidance lives in AGENTS.md.
+/CLAUDE.md

@@ -8,7 +8,7 @@
 
 Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 
-[![CI](https://github.com/Wangyx163/xiezuo_Agent/actions/workflows/tests.yml/badge.svg)](https://github.com/Wangyx163/xiezuo_Agent/actions/workflows/tests.yml)
+[![CI](https://github.com/Wangyx163/colwork_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/Wangyx163/colwork_agent/actions/workflows/tests.yml)
 ![Version](https://img.shields.io/badge/version-0.1.0-informational.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-3776AB.svg?logo=python&logoColor=white)
 ![Self-hosted](https://img.shields.io/badge/deploy-self--hosted-success.svg)
@@ -65,8 +65,8 @@ Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 ## ⚡ Quickstart
 
 ```powershell
-git clone https://github.com/Wangyx163/xiezuo_Agent.git
-cd xiezuo_Agent
+git clone https://github.com/Wangyx163/colwork_agent.git
+cd colwork_agent
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1

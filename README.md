@@ -37,27 +37,6 @@ Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 
 **Agent 会一直运行到成果被验收和发布。** 它持续读取数据库中的任务状态，跟进个人承诺、截止时间、延期、风险、求助、改派和范围变化；进程重启后可以从原状态继续。会议负责人验收每项工作的最新有效版本后，系统按版本来源生成终稿，经过最终人工批准，再发布和归档。
 
-<details>
-<summary><strong>Table of contents</strong></summary>
-
-- [Quickstart](#-quickstart)
-- [Workspaces by role](#-workspaces-by-role)
-- [Key features](#-key-features)
-- [How it works](#-how-it-works)
-- [Recall-first extraction](#-recall-first-extraction)
-- [Architecture](#-architecture)
-- [Workbench API](#-workbench-api)
-- [State machines](#-state-machines)
-- [Evaluation](#-evaluation)
-- [Models and development AI](#-models-and-development-ai)
-- [Deployment and storage](#-deployment-and-storage)
-- [Scope](#-scope)
-- [Project layout](#-project-layout)
-- [Documentation](#-documentation)
-- [License](#-license)
-
-</details>
-
 ---
 
 ## ⚡ Quickstart
@@ -162,35 +141,6 @@ flowchart LR
 
 ---
 
-## 🎯 Recall-first extraction
-
-召回链路被拆成四层，每层承担不同职责：
-
-```mermaid
-flowchart TB
-    Units[稳定 transcript units] --> Windows[重叠滑动窗口<br/>800 + 1600 + 800]
-    Windows --> Model[百炼语义扫描]
-    Units --> Rules[确定性弱信号规则]
-    Model --> Union[候选并集与归一化]
-    Rules --> Union
-    Union --> Evidence[引文、anchor、覆盖与边界校验]
-    Evidence --> Router{语义充分性分流}
-    Router -->|充分| Drafts[draft items]
-    Router -->|不确定但值得保留| Hints[review hints]
-```
-
-几个刻意的取舍：
-
-- `short_confirm` 不单独产生候选，只作为向前寻找被确认内容的上下文信号。
-- “选择、通过、同意、采用”等词是弱信号，不能仅凭一个词产生正式 draft。
-- 收紧发生在 draft/hint 分流，而不是最前面的召回门。
-- 多步骤投票、审批和跨段任务通过事件或 thread 拼接扩展，不把整个会议塞进单个窗口。
-- `800 + 1600 + 800` 是当前默认配置，属于召回率、调用次数与后续扩展性之间的工程折中，不是语义上的固定常数。
-
-完整设计依据见 [ADR-036](docs/design/adr/ADR-036-recall-first-extraction-and-review-hints.md)。
-
----
-
 ## 🏗️ Architecture
 
 ```mermaid
@@ -239,13 +189,11 @@ flowchart TB
     Dispatcher --> Feishu
 ```
 
-这是一个**模块化单体**，不是多 Agent 框架。业务事实只存在于数据库；LLM 上下文不承担权限、流程状态或恢复位置。更多说明见 [Architecture](docs/architecture.md)。
-
 ---
 
 ## 🔌 Workbench API
 
-当前 HTTP 接口服务于仓库自带工作台和飞书适配器，已经有鉴权、角色检查、请求体上限与幂等键约束；它还不是承诺长期兼容的公共 SDK。
+当前 HTTP 接口服务于仓库自带工作台和飞书适配器，已经有鉴权、角色检查、请求体上限与幂等键约束。
 
 ### Surfaces
 
@@ -272,7 +220,7 @@ flowchart TB
 | `POST` | `/api/final/generate`                        | 从最新有效版本生成带 lineage 的终稿候选                   |
 | `POST` | `/api/approvals/{approval_id}`               | 批准或拒绝最终发布                                        |
 
-写请求必须携带调用方生成的 `message_id` 作为幂等键；服务端不会偷偷生成一个新 ID，把重试伪装成新写入。示意请求：
+写请求必须携带调用方生成的 `message_id` 作为幂等键。示意请求：
 
 ```bash
 curl -X POST "http://127.0.0.1:8766/demo/api/review-hints/hint_123/materialize" \
@@ -312,8 +260,6 @@ stateDiagram-v2
     REJECTED --> [*]
     ARCHIVED --> [*]
 ```
-
-协作者贡献不会直接把任务推进到 `PENDING_ACCEPTANCE`；只有任务负责人处理并提交最终候选后，才进入会议负责人验收阶段。
 
 ### Episode and final release
 

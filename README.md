@@ -25,8 +25,6 @@ Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 
 <p align="center"><sub>🧭 负责人视角：在同一条会议协作链中查看团队进度、补录与派发任务、验收成果并批准终稿。</sub></p>
 
-> **Project status:** AI 工程样例与可运行产品原型。当前重点是验证模型、确定性系统与人的责任边界；不宣称已经达到生产级会议产品的准确率、SLA 或企业权限完备度。
-
 ---
 
 ## Why our project

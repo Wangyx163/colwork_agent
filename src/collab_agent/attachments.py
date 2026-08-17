@@ -24,6 +24,17 @@ class AttachmentExtractionError(RuntimeError):
     pass
 
 
+class AttachmentSupportUnavailable(AttachmentExtractionError):
+    """The format is known but this deployment cannot read it.
+
+    Separated from AttachmentExtractionError because the two mean opposite
+    things to the person who uploaded the file: an extraction error says their
+    document is unreadable, while this says the format was never installed
+    here. Collapsing them reported a missing optional dependency as FAILED,
+    which told a coordinator to go and fix a file that was fine.
+    """
+
+
 class AttachmentLimitError(ValueError):
     """A submission exceeds the raw upload limits and must not be decoded."""
 
@@ -121,7 +132,7 @@ def _extract_office_text(raw: bytes, suffix: str) -> str:
     try:
         from markitdown import MarkItDown
     except ImportError as error:
-        raise AttachmentExtractionError(
+        raise AttachmentSupportUnavailable(
             f"{suffix} support requires markitdown; install markitdown[docx,xlsx,pptx]"
         ) from error
     # MarkItDown selects a converter from the stream's filename extension, so a
@@ -172,6 +183,16 @@ def extract_attachment_text(file_payload: dict[str, Any]) -> dict[str, Any]:
                 "extraction_status": "UNSUPPORTED",
                 "extracted_text": "",
             }
+    except AttachmentSupportUnavailable as error:
+        # Caught ahead of the broad clause below: the format is recognised, this
+        # deployment just has no reader for it, which is the same answer as an
+        # unknown format rather than a failure of the submitted file.
+        return {
+            **metadata,
+            "extraction_status": "UNSUPPORTED",
+            "extraction_error": str(error)[:200],
+            "extracted_text": "",
+        }
     except Exception as error:  # malformed user files can raise parser-specific errors
         return {
             **metadata,

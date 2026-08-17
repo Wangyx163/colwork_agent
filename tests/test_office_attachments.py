@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import io
 import unittest
 import zipfile
 
 from collab_agent.attachments import extract_attachment_text
+
+# Office extraction lives behind the `office` extra. These tests assert the
+# installed behaviour, so without markitdown they would report a deployment
+# choice as a broken build -- the same reason the PostgreSQL adapter test skips
+# itself when no database URL is set. The degraded answer for a deployment that
+# never installed the extra is covered separately and does not need the extra.
+MARKITDOWN_INSTALLED = importlib.util.find_spec("markitdown") is not None
 
 DOCX_MIME = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -83,6 +91,10 @@ def payload(name: str, data: bytes, mime: str = "") -> dict:
     }
 
 
+@unittest.skipUnless(
+    MARKITDOWN_INSTALLED,
+    'install the "office" extra to run Office attachment extraction tests',
+)
 class OfficeAttachmentTests(unittest.TestCase):
     def test_docx_text_becomes_citable_evidence(self) -> None:
         questions = [

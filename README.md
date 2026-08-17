@@ -20,10 +20,16 @@ Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 </div>
 
 <p align="center">
-  <img src="docs/assets/coordinator-workbench.svg" width="920" alt="会议负责人工作台：团队任务时间线、派发、验收与终稿" />
+  <img src="docs/assets/coordinator-workbench.png" width="920" alt="会议负责人工作台：团队任务时间线、派发、验收与终稿" />
 </p>
 
-<p align="center"><sub>🧭 负责人视角：在同一条会议协作链中查看团队进度、补录与派发任务、验收成果并批准终稿。</sub></p>
+<p align="center"><sub>🧭 <b>负责人视角</b> · 在同一条会议协作链中查看团队进度、补录与派发任务、验收成果并批准终稿</sub></p>
+
+<p align="center">
+  <img src="docs/assets/participant-workbench.png" width="920" alt="参与者工作台：本人任务、接受或退回派发、提交成果与求助" />
+</p>
+
+<p align="center"><sub>👤 <b>参与者视角</b> · 只看得到自己的任务；接受或退回派发是人的闸口，模型不能代替回应</sub></p>
 
 ---
 

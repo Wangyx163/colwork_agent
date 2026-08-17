@@ -61,3 +61,65 @@ class PostgresAdapterTests(unittest.TestCase):
                         sql.Identifier(schema_name)
                     )
                 )
+
+    def test_initialize_adds_relations_missing_from_an_existing_database(
+        self,
+    ) -> None:
+        """A relation added to the schema must reach a database already built.
+
+        The regression this covers only appears on a long-lived database: CI
+        creates a fresh one every run and SQLite re-runs CREATE TABLE IF NOT
+        EXISTS, so both hid the fact that `initialize` used to return the
+        moment it saw `organizations`. Dropping a table from an initialized
+        schema reproduces exactly what a later commit adding one looks like.
+        """
+
+        import psycopg
+        from psycopg import sql
+        from collab_agent.postgres_store import (
+            PostgresDatabase,
+            database_url_for_schema,
+        )
+
+        schema_name = f"test_colwork_{uuid4().hex}"
+        isolated_url = database_url_for_schema(
+            DATABASE_URL, schema_name, create=True
+        )
+        schema_path = ROOT / "db" / "postgres_schema.sql"
+        dropped = ("assignment_handoffs", "action_item_link_lookup")
+        try:
+            database = PostgresDatabase(isolated_url, schema_path=schema_path)
+            database.initialize()
+            database.close()
+
+            with psycopg.connect(isolated_url, autocommit=True) as connection:
+                connection.execute("DROP INDEX action_item_link_lookup")
+                connection.execute("DROP TABLE assignment_handoffs")
+                for relation in dropped:
+                    self.assertIsNone(
+                        connection.execute(
+                            "SELECT to_regclass(%s)", (relation,)
+                        ).fetchone()[0]
+                    )
+
+            database = PostgresDatabase(isolated_url, schema_path=schema_path)
+            database.initialize()
+            database.close()
+
+            with psycopg.connect(isolated_url, autocommit=True) as connection:
+                for relation in dropped:
+                    self.assertIsNotNone(
+                        connection.execute(
+                            "SELECT to_regclass(%s)", (relation,)
+                        ).fetchone()[0],
+                        f"{relation} was not restored by initialize()",
+                    )
+        finally:
+            if not schema_name.startswith("test_colwork_"):
+                raise AssertionError("refusing to drop a non-test schema")
+            with psycopg.connect(DATABASE_URL, autocommit=True) as admin:
+                admin.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(
+                        sql.Identifier(schema_name)
+                    )
+                )

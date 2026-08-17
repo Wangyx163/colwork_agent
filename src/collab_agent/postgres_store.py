@@ -56,6 +56,62 @@ def _postgres_sql(sql: str) -> str:
     return translated
 
 
+_CREATED_RELATION = re.compile(
+    r"^\s*CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def _schema_statements(schema: str) -> list[str]:
+    """Split schema SQL on the semicolons that actually end a statement.
+
+    Naive splitting breaks the file: one function body is dollar-quoted and
+    contains its own semicolons, and several CHECK constraints hold quoted
+    literals. Tracking single quotes and $tag$ bodies keeps those intact, and
+    line comments are dropped so a commented-out CREATE never runs.
+    """
+
+    statements: list[str] = []
+    buffer: list[str] = []
+    dollar_tag: str | None = None
+    in_single = False
+    index = 0
+    while index < len(schema):
+        character = schema[index]
+        if dollar_tag is not None:
+            if schema.startswith(dollar_tag, index):
+                buffer.append(dollar_tag)
+                index += len(dollar_tag)
+                dollar_tag = None
+                continue
+        elif in_single:
+            if character == "'":
+                in_single = False
+        elif character == "'":
+            in_single = True
+        elif character == "$":
+            opening = re.match(r"\$[A-Za-z_]*\$", schema[index:])
+            if opening:
+                dollar_tag = opening.group(0)
+                buffer.append(dollar_tag)
+                index += len(dollar_tag)
+                continue
+        elif schema.startswith("--", index):
+            newline = schema.find("\n", index)
+            index = len(schema) if newline == -1 else newline
+            continue
+        elif character == ";":
+            statements.append("".join(buffer))
+            buffer = []
+            index += 1
+            continue
+        buffer.append(character)
+        index += 1
+    statements.append("".join(buffer))
+    return [statement.strip() for statement in statements if statement.strip()]
+
+
 def _normalize_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -114,6 +170,7 @@ class PostgresDatabase:
             existing = self.one("SELECT to_regclass('organizations') AS table_name")
             if existing and existing["table_name"]:
                 self._migrate_claimable_action_items()
+                self._create_missing_relations()
                 return
             if not self.schema_path:
                 raise RuntimeError(
@@ -127,6 +184,38 @@ class PostgresDatabase:
                 cursor.execute(
                     "SELECT pg_advisory_unlock(hashtext(%s))", (lock_name,)
                 )
+
+    def _create_missing_relations(self) -> None:
+        """Create schema tables and indexes added after this database was built.
+
+        `initialize` returns as soon as it sees `organizations`, so until now a
+        relation added to postgres_schema.sql later never reached a database
+        that already existed. Neither test path noticed: CI builds a fresh
+        database every run, and SQLite re-runs CREATE TABLE IF NOT EXISTS on
+        every open. Only a long-lived PostgreSQL database was left behind, and
+        it reported the gap as UndefinedTable at query time -- far from the
+        commit that introduced it.
+
+        Each statement runs only when its relation is absent, so this is
+        idempotent and needs no version ledger. It deliberately covers tables
+        and indexes only: a new column, trigger or constraint on an existing
+        table still needs a hand-written migration, because deciding what to do
+        with the rows already there is not something a schema file can say.
+        """
+
+        if not self.schema_path:
+            return
+        for statement in _schema_statements(
+            self.schema_path.read_text(encoding="utf-8")
+        ):
+            created = _CREATED_RELATION.match(statement)
+            if not created:
+                continue
+            present = self.one("SELECT to_regclass(?) AS relation", (created.group(1),))
+            if present and present["relation"]:
+                continue
+            with self.connection.cursor() as cursor:
+                cursor.execute(statement)
 
     def _migrate_claimable_action_items(self) -> None:
         """Apply the small, idempotent P0-to-meeting-intake schema extension."""

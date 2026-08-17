@@ -20,7 +20,7 @@ Recall-first · Human-gated · Versioned · Recoverable · Self-hosted
 </div>
 
 <p align="center">
-  <img src="docs/assets/coordinator-workbench.png" width="920" alt="会议负责人工作台：团队任务时间线、派发、验收与终稿" />
+  <img src="docs/assets/coordinator-workbench.png" width="820" alt="会议负责人工作台：团队任务时间线、派发、验收与终稿" />
 </p>
 
 <p align="center"><sub>🧭 <b>负责人视角</b> · 在同一条会议协作链中查看团队进度、补录与派发任务、验收成果并批准终稿</sub></p>
@@ -72,7 +72,7 @@ python -m collab_agent serve
 | 🔭 **系统管理员**           | Agent 运行记录、模型上下文、Token 消耗、外发结果、审计记录和版本来源 | 在 Observatory 中检查系统为什么采取某一步、是否恢复成功以及消息是否重复发送；不修改业务状态  |
 
 <p align="center">
-  <img src="docs/assets/participant-workbench.png" width="920" alt="参与者个人任务工作台：待处理事项、个人任务与协作偏好" />
+  <img src="docs/assets/participant-workbench.png" width="820" alt="参与者个人任务工作台：待处理事项、个人任务与协作偏好" />
 </p>
 
 <p align="center"><sub>👤 参与者视角：只处理与自己有关的派发、协作和贡献；待回应事项集中出现，个人协作偏好由本人确认后再提供给同事。</sub></p>
